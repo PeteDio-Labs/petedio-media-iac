@@ -24,6 +24,14 @@ resource "proxmox_virtual_environment_container" "this" {
         address = var.ipv4_address
         gateway = var.gateway
       }
+
+      # Some community-script LXCs (sonarr/radarr) were created with ip6=auto.
+      dynamic "ipv6" {
+        for_each = var.ipv6_auto ? [1] : []
+        content {
+          address = "auto"
+        }
+      }
     }
 
     # Second interface (only emitted when var.net1_address is set — plex).
@@ -67,7 +75,7 @@ resource "proxmox_virtual_environment_container" "this" {
   }
 
   network_interface {
-    name     = "eth0"
+    name     = var.interface_name
     bridge   = var.bridge
     firewall = var.firewall
   }
@@ -88,16 +96,38 @@ resource "proxmox_virtual_environment_container" "this" {
   dynamic "mount_point" {
     for_each = var.mount_points
     content {
-      volume = mount_point.value.volume
-      path   = mount_point.value.path
+      volume    = mount_point.value.volume
+      path      = mount_point.value.path
+      read_only = mount_point.value.read_only
     }
   }
 
+  # Brownfield-capture ignore set. Beyond the bpg round-trip trio
+  # (template_file_id / user_account / features), media LXCs were created by the
+  # community-scripts installer, which left per-host cosmetic state that we must
+  # NOT overwrite (capture-in-place): the HTML `description` banner, the `console`
+  # block, and heterogeneous per-host `dns` (some 8.8.8.8, some 1.1.1.1, some
+  # none). `started` is ignored so a plan never proposes a stop/start. Ignoring
+  # these preserves live config and lets `plan` reach a clean no-op.
+  # timeout_* are bpg operation timeouts (not container state) that import never
+  # populates, so they always show as cosmetic "+ adds"; cpu.architecture/limit
+  # are likewise computed defaults import doesn't round-trip. Ignoring them lets
+  # `plan` reach a true no-op without proposing any change to the live LXC.
   lifecycle {
     ignore_changes = [
       operating_system[0].template_file_id,
       initialization[0].user_account,
+      initialization[0].dns,
       features,
+      console,
+      description,
+      started,
+      timeout_clone,
+      timeout_create,
+      timeout_delete,
+      timeout_start,
+      timeout_update,
+      cpu,
     ]
   }
 }

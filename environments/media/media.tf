@@ -56,6 +56,7 @@ module "seerr" {
   disk_size        = 12
   datastore_id     = "sdb3-storage"
   firewall         = true
+  interface_name   = "eth1" # seerr's only NIC is eth1 (not eth0)
   ssh_public_key   = var.ssh_public_key
   target_node      = var.target_node
   description      = "Overseerr/Jellyseerr (requests). Media stack — managed by petedio-media-iac."
@@ -73,6 +74,7 @@ module "plex" {
   bridge           = "vmbr0"
   firewall         = true
   net1_address     = "192.168.50.140/24"
+  net1_gateway     = "192.168.50.1" # plex's LAN NIC carries the .50 gateway
   net1_bridge      = "vmbr1"
   net1_firewall    = true
   cores            = 4
@@ -87,7 +89,7 @@ module "plex" {
   # downloads is mounted read-only on plex.
   mount_points = [
     { volume = local.media_volume, path = "/mnt/media" },
-    { volume = local.downloads_volume, path = "/mnt/downloads" },
+    { volume = local.downloads_volume, path = "/mnt/downloads", read_only = true },
   ]
 }
 
@@ -102,6 +104,7 @@ module "sonarr" {
   memory_dedicated = 1024
   disk_size        = 4
   datastore_id     = "sdb3-storage"
+  ipv6_auto        = true # created with ip6=auto
   ssh_public_key   = var.ssh_public_key
   target_node      = var.target_node
   description      = "Sonarr (TV). Media stack — managed by petedio-media-iac."
@@ -123,6 +126,7 @@ module "radarr" {
   memory_dedicated = 1024
   disk_size        = 4
   datastore_id     = "sdb3-storage"
+  ipv6_auto        = true # created with ip6=auto
   ssh_public_key   = var.ssh_public_key
   target_node      = var.target_node
   description      = "Radarr (movies). Media stack — managed by petedio-media-iac."

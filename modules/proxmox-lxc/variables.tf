@@ -72,6 +72,18 @@ variable "firewall" {
   default     = false
 }
 
+variable "interface_name" {
+  description = "Name of the primary network interface. Usually eth0, but seerr (101) was created with eth1 as its only NIC."
+  type        = string
+  default     = "eth0"
+}
+
+variable "ipv6_auto" {
+  description = "Set ip6=auto on the primary interface (sonarr/radarr were created this way by the community-script installer)."
+  type        = bool
+  default     = false
+}
+
 # --- Optional second interface (dual-homed hosts: plex) ----------------------
 variable "net1_address" {
   description = "CIDR IPv4 for the second interface (eth1). null = single-homed (default)."
@@ -99,10 +111,11 @@ variable "net1_firewall" {
 
 # --- Bind-mounts -------------------------------------------------------------
 variable "mount_points" {
-  description = "Bind-mounts to attach (e.g. /mnt/media, /mnt/downloads). List of {volume, path}."
+  description = "Bind-mounts to attach (e.g. /mnt/media, /mnt/downloads). List of {volume, path, read_only?}."
   type = list(object({
-    volume = string
-    path   = string
+    volume    = string
+    path      = string
+    read_only = optional(bool, false)
   }))
   default = []
 }
