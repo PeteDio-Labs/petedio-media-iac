@@ -1,0 +1,111 @@
+# Workflow B — GitOps / IaC (plan-on-PR, apply-on-merge) for the media stack.
+# Runs on the self-hosted runner (VM 232) INSIDE the homelab, so it can reach the
+# Proxmox API (.10:8006) and the MinIO state backend (.221:9000) — a GitHub-hosted
+# runner cannot route to 192.168.50.0/24.
+#
+# Unlike petedio-iac, Terraform here uses NO `vault` provider (media TF is pure
+# LXC capture), so there's no VAULT_* env or token export — vault-action just
+# mints the MinIO + Proxmox + ssh creds via OIDC.
+#
+# SAFETY: apply-on-merge is intentionally CONSERVATIVE for brownfield capture —
+# do not enable auto-apply until the imports land a clean no-op plan and the state
+# is in MinIO. Until then this workflow plans on PR and the apply step is a no-op
+# fast-path (nothing to apply on a zero-drift state). See docs/GOTCHAS.md.
+name: terraform
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+env:
+  TF_IN_AUTOMATION: "1"
+  # Fallback static creds (overridden at runtime by the Vault-OIDC step below).
+  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+  TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+  TF_VAR_ssh_public_key: ${{ secrets.LXC_SSH_PUBLIC_KEY }}
+
+permissions:
+  contents: read
+  pull-requests: write # to post the plan as a PR comment
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+
+jobs:
+  tf:
+    runs-on: [self-hosted, linux, x64, homelab]
+    defaults:
+      run:
+        working-directory: environments/media
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      # vault-action's `caCertificate` wants BASE64-encoded PEM. The self-signed
+      # Vault CA is committed in petedio-iac; copy it here (vault-ca.crt) when
+      # wiring CI for real. Until the runner + Vault role exist for this repo, the
+      # static repo secrets above are the path and this step can stay commented.
+      #
+      # - name: Encode Vault CA
+      #   id: vault_ca
+      #   run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+      #
+      # - name: Vault — mint creds via OIDC
+      #   uses: hashicorp/vault-action@v3
+      #   with:
+      #     url: https://192.168.50.223:8200
+      #     method: jwt
+      #     path: jwt-github
+      #     role: media-ci          # new media-scoped role (follow-up)
+      #     jwtGithubAudience: https://github.com/PeteDio-Labs
+      #     caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+      #     exportEnv: true
+      #     secrets: |
+      #       kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+      #       kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
+      #       kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
+      #       kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Plan
+        if: github.event_name == 'pull_request'
+        id: plan
+        shell: bash
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
+
+      - name: Comment plan on PR
+        if: ${{ always() && github.event_name == 'pull_request' && steps.plan.outcome != 'skipped' }}
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('environments/media/plan.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.slice(0, 60000) + '\n...(truncated)...' : plan;
+            const failed = '${{ steps.plan.outcome }}' === 'failure';
+            const header = failed
+              ? '#### `terraform plan` — media ❌ **plan failed** (error below)'
+              : '#### `terraform plan` — media ✅';
+            const body = [header, '```hcl', truncated, '```'].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -input=false -auto-approve

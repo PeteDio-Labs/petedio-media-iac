@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored) and fill in. CI passes these as TF_VAR_*
+# env, sourced from Vault via OIDC on the self-hosted runner.
+#
+# proxmox_api_token: the same petedio@pam!petedio token used by petedio-iac
+#   (read from kv/iac/proxmox in Vault). Mint via pveum on pve01 —
+#   pveum user token add petedio@pam petedio --privsep 0
+proxmox_api_token = "petedio@pam!petedio=REPLACE_WITH_SECRET"
+
+# Endpoint of the node where the media LXCs live (pve01). bpg reads PVE version here.
+proxmox_endpoint = "https://192.168.50.10:8006/"
+target_node      = "pve01"
+
+# Public key installed for root inside each LXC (Ansible logs in with the pair).
+# Same key as petedio-iac (kv/iac/lxc-ssh), so Ansible's id_ed25519_ansible works.
+ssh_public_key = "ssh-ed25519 AAAA... you@host"
