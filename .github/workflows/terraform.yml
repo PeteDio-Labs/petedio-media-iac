@@ -5,12 +5,17 @@
 #
 # Unlike petedio-iac, Terraform here uses NO `vault` provider (media TF is pure
 # LXC capture), so there's no VAULT_* env or token export — vault-action just
-# mints the MinIO + Proxmox + ssh creds via OIDC.
+# mints the MinIO + Proxmox + ssh creds via OIDC (no static GitHub secrets).
 #
 # SAFETY: apply-on-merge is intentionally CONSERVATIVE for brownfield capture —
 # do not enable auto-apply until the imports land a clean no-op plan and the state
 # is in MinIO. Until then this workflow plans on PR and the apply step is a no-op
 # fast-path (nothing to apply on a zero-drift state). See docs/GOTCHAS.md.
+#
+# PREREQ: the `media-ci` JWT role must exist in Vault (petedio-iac
+# vault-config/auth.tf, applied by the operator with the root token) before this
+# workflow can mint a token. Until then Init fails with "No valid credential
+# sources found".
 name: terraform
 
 on:
@@ -20,11 +25,9 @@ on:
 
 env:
   TF_IN_AUTOMATION: "1"
-  # Fallback static creds (overridden at runtime by the Vault-OIDC step below).
-  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-  TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
-  TF_VAR_ssh_public_key: ${{ secrets.LXC_SSH_PUBLIC_KEY }}
+  # Creds come ENTIRELY from the Vault-OIDC step below — no static GitHub secrets
+  # in this repo. (The AWS_*/TF_VAR_* names are populated into $GITHUB_ENV by
+  # vault-action with exportEnv:true, for the init/plan/apply steps that follow.)
 
 permissions:
   contents: read
@@ -44,30 +47,35 @@ jobs:
         with:
           terraform_wrapper: false
 
-      # vault-action's `caCertificate` wants BASE64-encoded PEM. The self-signed
-      # Vault CA is committed in petedio-iac; copy it here (vault-ca.crt) when
-      # wiring CI for real. Until the runner + Vault role exist for this repo, the
-      # static repo secrets above are the path and this step can stay commented.
-      #
-      # - name: Encode Vault CA
-      #   id: vault_ca
-      #   run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-      #
-      # - name: Vault — mint creds via OIDC
-      #   uses: hashicorp/vault-action@v3
-      #   with:
-      #     url: https://192.168.50.223:8200
-      #     method: jwt
-      #     path: jwt-github
-      #     role: media-ci          # new media-scoped role (follow-up)
-      #     jwtGithubAudience: https://github.com/PeteDio-Labs
-      #     caCertificate: ${{ steps.vault_ca.outputs.b64 }}
-      #     exportEnv: true
-      #     secrets: |
-      #       kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
-      #       kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
-      #       kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
-      #       kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key
+      # vault-action's `caCertificate` wants BASE64-encoded PEM, and a `with:`
+      # value can't read a file — so emit the committed self-signed Vault CA
+      # (environments/media/vault-ca.crt, relative to working-directory) as a
+      # base64 step output. We verify TLS against this CA, never tlsSkipVerify.
+      - name: Encode Vault CA
+        id: vault_ca
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # Exchange the GitHub Actions OIDC token for a short-lived Vault token (JWT
+      # auth, role media-ci) and export the backend/provider creds as env for the
+      # init/plan/apply steps. jwtGithubAudience MUST equal var.github_oidc_audience
+      # in petedio-iac vault-config. The JWT backend is mounted at jwt-github/ (not
+      # the default jwt/), so `path` must be set explicitly.
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: media-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
+            kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
+            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key
 
       - name: Init
         run: terraform init -input=false
@@ -106,6 +114,12 @@ jobs:
               body,
             });
 
+      # Apply-on-merge is OPT-IN for the brownfield capture: gated behind the repo
+      # variable MEDIA_APPLY_ENABLED == 'true'. Until then, merges only run init/
+      # validate (plan is PR-only) and never apply — so the qbittorrent-vpn
+      # dual-state caveat (old homelab-infra TF still manages 110) can't cause an
+      # unintended apply. Flip the variable on once the old-side state rm is done
+      # and you're ready for apply-on-merge. See docs/GOTCHAS.md.
       - name: Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.MEDIA_APPLY_ENABLED == 'true' }}
         run: terraform apply -input=false -auto-approve
