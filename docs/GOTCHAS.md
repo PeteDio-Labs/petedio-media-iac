@@ -39,8 +39,24 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   it from the OLD side (or retire the old stack). Don't touch old state casually —
   flag and coordinate.
 - **VPN secrets go to Vault, not code.** Proton WireGuard key + qBit password →
-  a media Vault path (e.g. `kv/services/media/qbittorrent`), read by a media-scoped
-  policy. Never commit them; never widen the shared `ansible` policy to reach them.
+  `kv/services/media/qbittorrent`. The existing **`ansible`** policy already grants
+  `kv/data/services/* read`, so no policy change is needed to consume it — only a
+  privileged **seed** (Vault admin token; the AppRoles can only read `services/*`).
+  See `docs/runbooks/qbittorrent-vault-secret.md`. Never commit them; never widen a
+  policy beyond `services/*` to reach them.
+
+## Ansible reach into the legacy media LXCs
+
+- **The community-script media LXCs had NO ssh key for Ansible.** They predate the
+  petedio key convention (root `authorized_keys` was empty). The brownfield import
+  doesn't add keys (`user_account` is in `ignore_changes`). Bootstrap was done
+  **additively** via pve01 `pct exec` (append `id_ed25519_ansible.pub`, don't
+  remove existing access) — `ansible media -m ping` then succeeds for all 7. qbit
+  (110) already had keys (it was in the old TF).
+- **Capture-in-place Ansible = assert what's already there.** Roles assert the
+  running state (timezone UTC, service enabled+running, base pkgs present) so
+  `--check` is a clean no-op. They are documentation-as-code of the baseline, NOT
+  a reconfiguration. Always `--check` first.
 
 ## State / secrets isolation
 

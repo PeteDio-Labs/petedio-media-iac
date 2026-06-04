@@ -1,0 +1,26 @@
+# Configure the media hosts to match their running state (idempotent capture).
+# This session scopes the FIRST idempotent pass to prowlarr (109) — the lowest-
+# risk host. Run with --check FIRST to prove a clean no-op before any real run:
+#
+#   cd ansible
+#   ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory/hosts.yml \
+#     playbooks/configure-media.yml --limit prowlarr --check
+#
+# As each app's role is captured, add its block below and widen the --limit.
+---
+- name: Media base (all media hosts)
+  hosts: media
+  gather_facts: true
+  roles:
+    - media-base
+
+- name: Prowlarr
+  hosts: prowlarr
+  gather_facts: false
+  roles:
+    - prowlarr
+
+# TODO (follow-up, PET-47): sonarr / radarr / lidarr / plex / seerr /
+# qbittorrent-vpn roles. qbittorrent-vpn's Gluetun/Proton secrets come from
+# Vault (kv/services/media/qbittorrent) read by a media-scoped policy — never
+# committed. See docs/GOTCHAS.md.

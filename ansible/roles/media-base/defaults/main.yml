@@ -1,0 +1,5 @@
+---
+media_timezone: "Etc/UTC"
+media_base_packages:
+  - curl
+  - ca-certificates

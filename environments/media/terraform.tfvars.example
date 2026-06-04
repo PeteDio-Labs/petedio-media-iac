@@ -1,10 +1,11 @@
 # Copy to terraform.tfvars (gitignored) and fill in. CI passes these as TF_VAR_*
 # env, sourced from Vault via OIDC on the self-hosted runner.
 #
-# proxmox_api_token: the same petedio@pam!petedio token used by petedio-iac
-#   (read from kv/iac/proxmox in Vault). Mint via pveum on pve01 —
-#   pveum user token add petedio@pam petedio --privsep 0
-proxmox_api_token = "petedio@pam!petedio=REPLACE_WITH_SECRET"
+# proxmox_api_token: the same token used by petedio-iac, read from kv/iac/proxmox
+#   in Vault (it resolves to terraform@pam!terraform). Locally, source it the same
+#   way petedio-iac does — log in with the terraform-local AppRole and
+#   `vault kv get -field=api_token kv/iac/proxmox`.
+proxmox_api_token = "terraform@pam!terraform=REPLACE_WITH_SECRET"
 
 # Endpoint of the node where the media LXCs live (pve01). bpg reads PVE version here.
 proxmox_endpoint = "https://192.168.50.10:8006/"
