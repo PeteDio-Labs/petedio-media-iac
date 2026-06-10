@@ -62,7 +62,7 @@ jobs:
       # in petedio-iac vault-config. The JWT backend is mounted at jwt-github/ (not
       # the default jwt/), so `path` must be set explicitly.
       - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@v3
+        uses: hashicorp/vault-action@v4
         with:
           url: https://192.168.50.223:8200
           method: jwt
