@@ -1,21 +1,23 @@
-# Workflow B — GitOps / IaC (plan-on-PR, apply-on-merge) for the media stack.
-# Runs on the self-hosted runner (VM 232) INSIDE the homelab, so it can reach the
-# Proxmox API (.10:8006) and the MinIO state backend (.221:9000) — a GitHub-hosted
-# runner cannot route to 192.168.50.0/24.
+# Workflow B — GitOps / IaC (validate-on-PR, apply-on-merge) for the media stack.
 #
-# Unlike petedio-iac, Terraform here uses NO `vault` provider (media TF is pure
-# LXC capture), so there's no VAULT_* env or token export — vault-action just
-# mints the MinIO + Proxmox + ssh creds via OIDC (no static GitHub secrets).
+# SECURITY SPLIT (PET-104 / PET-163): this repo is PUBLIC and the apply runner is self-hosted
+# INSIDE the homelab. A `pull_request` runs the PR's OWN workflow + Terraform config, so running
+# it on the self-hosted runner = arbitrary code on a box that can reach Proxmox (.10:8006), MinIO
+# state (.221:9000), Vault (.223:8200), and the whole 192.168.50.0/24 — and the old flow minted
+# the `media-ci` Vault token on `pull_request` first. So the jobs are split by trust:
+#   * validate  — PR + push. GitHub-HOSTED, ephemeral, NO Vault, NO LAN, NO state. fmt +
+#                 `init -backend=false` + validate. Worst case a malicious PR provider runs in a
+#                 throwaway hosted sandbox with no creds and no homelab reachability.
+#   * apply     — push to main ONLY (already-merged, trusted code). Self-hosted; the ONLY job that
+#                 mints `media-ci` creds + touches state. Apply itself stays OPT-IN behind
+#                 MEDIA_APPLY_ENABLED for the brownfield capture. PR-controlled code never runs here.
+# Tradeoff: PRs no longer get a `terraform plan` comment (a real plan needs the LAN backend +
+# provider creds we now withhold from PR runs). Authoritative plan is the operator's (local) or the
+# apply-on-merge log. The matching Vault-role change (drop the pull_request sub from the media-ci
+# role) is in petedio-iac vault-config/auth.tf.
 #
-# SAFETY: apply-on-merge is intentionally CONSERVATIVE for brownfield capture —
-# do not enable auto-apply until the imports land a clean no-op plan and the state
-# is in MinIO. Until then this workflow plans on PR and the apply step is a no-op
-# fast-path (nothing to apply on a zero-drift state). See docs/GOTCHAS.md.
-#
-# PREREQ: the `media-ci` JWT role must exist in Vault (petedio-iac
-# vault-config/auth.tf, applied by the operator with the root token) before this
-# workflow can mint a token. Until then Init fails with "No valid credential
-# sources found".
+# PREREQ: the `media-ci` JWT role must exist in Vault (petedio-iac vault-config/auth.tf, applied by
+# the operator) before the apply job can mint a token.
 name: terraform
 
 on:
@@ -23,46 +25,86 @@ on:
   push:
     branches: [main]
 
-env:
-  TF_IN_AUTOMATION: "1"
-  # Creds come ENTIRELY from the Vault-OIDC step below — no static GitHub secrets
-  # in this repo. (The AWS_*/TF_VAR_* names are populated into $GITHUB_ENV by
-  # vault-action with exportEnv:true, for the init/plan/apply steps that follow.)
+# Serialize media-iac runs: the MinIO state backend has no locking (backend.tf), so concurrent
+# applies racing the same state file is a footgun. cancel-in-progress: false queues instead of
+# killing a mid-flight apply. (Repo-scoped group — independent of petedio-iac's tf-homelab.)
+concurrency:
+  group: tf-media
+  cancel-in-progress: false
 
+# Least privilege at the top: read-only. The apply job re-grants id-token; the PR plan-comment
+# step is gone (PET-104) so nothing needs pull-requests:write anymore.
 permissions:
   contents: read
-  pull-requests: write # to post the plan as a PR comment
-  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
 
 jobs:
-  tf:
-    runs-on: [self-hosted, linux, x64, homelab]
+  # --- PR-safe validation -------------------------------------------------------------
+  # GitHub-hosted + ephemeral: no homelab reachability, no Vault token, no state access. The ONLY
+  # job a pull_request runs. `init -backend=false` skips the MinIO backend (unreachable from a
+  # hosted runner anyway) and just installs providers so `validate` can run.
+  validate:
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: environments/media
+    env:
+      TF_IN_AUTOMATION: "1"
+      # bpg/proxmox has a required `endpoint`; `terraform validate` instantiates the provider, so
+      # give dummy var values so validate doesn't error on missing provider config. validate NEVER
+      # connects (no plan/apply here), so the values are irrelevant.
+      TF_VAR_proxmox_endpoint: https://proxmox.invalid:8006/
+      TF_VAR_proxmox_api_token: "validate@pam!dummy=00000000-0000-0000-0000-000000000000"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
 
-      # vault-action's `caCertificate` wants BASE64-encoded PEM, and a `with:`
-      # value can't read a file — so emit the committed self-signed Vault CA
-      # (environments/media/vault-ca.crt, relative to working-directory) as a
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
+        run: terraform init -input=false -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+  # --- Privileged apply ---------------------------------------------------------------
+  # Self-hosted, INSIDE the homelab. Runs ONLY on push to main (post-merge, trusted code), gated
+  # behind the hosted `validate` job. The ONLY job that mints `media-ci` creds + touches state.
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+    defaults:
+      run:
+        working-directory: environments/media
+    env:
+      TF_IN_AUTOMATION: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      # vault-action's `caCertificate` wants BASE64-encoded PEM, and a `with:` value can't read a
+      # file — so emit the committed self-signed Vault CA (relative to working-directory) as a
       # base64 step output. We verify TLS against this CA, never tlsSkipVerify.
       - name: Encode Vault CA
         id: vault_ca
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
-      # Exchange the GitHub Actions OIDC token for a short-lived Vault token (JWT
-      # auth, role media-ci) and export the backend/provider creds as env for the
-      # init/plan/apply steps. jwtGithubAudience MUST equal var.github_oidc_audience
-      # in petedio-iac vault-config. The JWT backend is mounted at jwt-github/ (not
-      # the default jwt/), so `path` must be set explicitly.
+      # Exchange the GitHub Actions OIDC token for a short-lived Vault token (JWT auth, role
+      # media-ci) and export the backend/provider creds as env. The media-ci role now binds ONLY
+      # the main-push sub (PET-163 in petedio-iac vault-config), so this can't be minted from a PR.
       - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@v4
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
@@ -80,46 +122,16 @@ jobs:
       - name: Init
         run: terraform init -input=false
 
-      - name: Format check
-        run: terraform fmt -check -recursive
-
-      - name: Validate
-        run: terraform validate
-
+      # Plan to a file then apply exactly that plan, so the merge's plan is visible in the log even
+      # while apply is gated off, and apply converges on precisely what was planned.
       - name: Plan
-        if: github.event_name == 'pull_request'
-        id: plan
-        shell: bash
-        run: |
-          set -o pipefail
-          terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
+        run: terraform plan -input=false -no-color -out=tfplan
 
-      - name: Comment plan on PR
-        if: ${{ always() && github.event_name == 'pull_request' && steps.plan.outcome != 'skipped' }}
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = fs.readFileSync('environments/media/plan.txt', 'utf8');
-            const truncated = plan.length > 60000 ? plan.slice(0, 60000) + '\n...(truncated)...' : plan;
-            const failed = '${{ steps.plan.outcome }}' === 'failure';
-            const header = failed
-              ? '#### `terraform plan` — media ❌ **plan failed** (error below)'
-              : '#### `terraform plan` — media ✅';
-            const body = [header, '```hcl', truncated, '```'].join('\n');
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-
-      # Apply-on-merge is OPT-IN for the brownfield capture: gated behind the repo
-      # variable MEDIA_APPLY_ENABLED == 'true'. Until then, merges only run init/
-      # validate (plan is PR-only) and never apply — so the qbittorrent-vpn
-      # dual-state caveat (old homelab-infra TF still manages 110) can't cause an
-      # unintended apply. Flip the variable on once the old-side state rm is done
-      # and you're ready for apply-on-merge. See docs/GOTCHAS.md.
+      # Apply-on-merge stays OPT-IN for the brownfield capture: gated behind the repo variable
+      # MEDIA_APPLY_ENABLED == 'true'. Until then merges run validate + plan but never apply, so the
+      # qbittorrent-vpn dual-state caveat (old homelab-infra TF still manages 110) can't trigger an
+      # unintended apply. Flip the variable on once the imports land a clean no-op plan and the
+      # old-side state rm is done. See docs/GOTCHAS.md.
       - name: Apply
-        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.MEDIA_APPLY_ENABLED == 'true' }}
-        run: terraform apply -input=false -auto-approve
+        if: ${{ vars.MEDIA_APPLY_ENABLED == 'true' }}
+        run: terraform apply -input=false tfplan
