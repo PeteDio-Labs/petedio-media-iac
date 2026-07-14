@@ -1,0 +1,13 @@
+---
+# seerr — media requests/discovery (seerr-team/seerr, the Jellyseerr successor),
+# systemd service on :5055, built from a release tarball at /opt/seerr.
+#
+# CAPTURE-IN-PLACE by default: the role only asserts the running service. The
+# upgrade path is GUARDED OFF (seerr_upgrade=false) and never runs during a normal
+# capture pass — enable it explicitly to move 3.1.0 -> seerr_version. See
+# docs/runbooks/seerr-upgrade.md.
+seerr_upgrade: false
+seerr_version: "3.3.0" # target when seerr_upgrade=true (running baseline: 3.1.0)
+seerr_install_dir: /opt/seerr
+seerr_data_dir: /opt/seerr/config # settings.json + db.sqlite3 (preserve across upgrade)
+seerr_service: seerr

@@ -1,0 +1,11 @@
+# sonarr — TV manager (community-script LXC, :8989).
+# CAPTURE-IN-PLACE: asserts the already-running service so `--check` is a no-op.
+# The binary install is owned by the community-script installer; we capture the
+# service contract, not re-provision it. Config/db live at /var/lib/sonarr on the
+# LXC rootfs (sdb3-storage) — see docs/data-volumes.md.
+---
+- name: Sonarr service enabled and running
+  ansible.builtin.systemd_service:
+    name: sonarr
+    enabled: true
+    state: started

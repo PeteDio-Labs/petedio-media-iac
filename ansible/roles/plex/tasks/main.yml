@@ -1,0 +1,12 @@
+# plex — Plex Media Server (community-script LXC, :32400). Dual-homed host
+# (net0 vmbr0 .86 mesh + net1 vmbr1 .50 LAN); its /mnt/downloads bind-mount is
+# read-only. CAPTURE-IN-PLACE: asserts the running service so `--check` is a
+# no-op. The Plex library + metadata live on the LXC rootfs
+# (/var/lib/plexmediaserver, ~5.6G) — see docs/data-volumes.md — so capturing the
+# container never touches them.
+---
+- name: Plex Media Server enabled and running
+  ansible.builtin.systemd_service:
+    name: plexmediaserver
+    enabled: true
+    state: started

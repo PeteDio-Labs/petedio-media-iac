@@ -37,8 +37,8 @@ flowchart TB
             PLEX["plex · 103 · 86.140 + .140<br/>dual-homed (vmbr0 mesh + vmbr1)<br/>downloads ro"]
             SONARR["sonarr · 104 · .15<br/>sdb3 · ipv6 auto"]
             RADARR["radarr · 105 · .16<br/>sdb3 · ipv6 auto"]
-            PROWLARR["prowlarr · 109 · .20<br/>local-lvm · Ansible role ✓"]
-            QBIT["qbittorrent-vpn · 110 · .21<br/>Gluetun/Proton · also in OLD TF"]
+            PROWLARR["prowlarr · 109 · .20<br/>local-lvm"]
+            QBIT["qbittorrent-vpn · 110 · .21<br/>Gluetun/Proton · also in OLD TF<br/>completed → /downloads/completed/"]
         end
 
         subgraph stores["shared host stores (bind-mounted, data lives here)"]
@@ -62,9 +62,12 @@ flowchart TB
 - **Terraform** (`environments/media`) declares each LXC via the reusable
   `modules/proxmox-lxc`; the 7 hosts were `terraform import`ed to a **zero-drift**
   plan (PET-46). State key is isolated from `petedio-iac` (`media/terraform.tfstate`).
-- **Ansible** configures the running services idempotently (PET-47). Only
-  `prowlarr` has a role so far; the rest are follow-up. Reaches the LXCs over
-  `id_ed25519_ansible` (bootstrapped additively via pve01 `pct exec`).
+- **Ansible** configures the running services idempotently (PET-47). All 7 hosts
+  now have capture-in-place roles (`media-base` + per-app service asserts;
+  per-host timezone via `inventory/host_vars`), and the `qbittorrent-vpn` role
+  additionally captures the completed-download path fix (`/downloads/completed/`).
+  Reaches the LXCs over `id_ed25519_ansible` (bootstrapped additively via pve01
+  `pct exec`). Stateful volumes are mapped in [data-volumes.md](data-volumes.md).
 - **Secrets:** the Proxmox token / MinIO creds / LXC ssh key are the same
   `kv/iac/*` values `petedio-iac` uses (read via the `terraform-local` AppRole).
   The media-only VPN secret (`kv/services/media/qbittorrent`) is read by the

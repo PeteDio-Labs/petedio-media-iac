@@ -31,13 +31,39 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `/downloads` vs `/mnt/downloads`. They're host-dir bind-mounts of the shared
   `/mnt/media` + `/mnt/downloads` on pve01. Encode each host's actual target path.
 - **Firewall flag:** on for plex, seerr, qbittorrent-vpn; off for the rest.
+- **Container timezone is NOT uniform:** `America/Chicago` on lidarr/seerr/sonarr/
+  radarr, but `Etc/UTC` on plex/prowlarr/qbittorrent-vpn. The `media-base` role
+  defaults to `Etc/UTC` and the four Chicago hosts override via
+  `inventory/host_vars/*.yml` — otherwise `--check` proposes a timezone change on
+  those four. Ground-truth `cat /etc/timezone` per host before assuming.
 
-## qbittorrent-vpn — two states
+## qbittorrent-vpn — two states + raw config + save-path
 
 - **110 is also managed by the OLD homelab-infra TF.** Capturing it here means two
   states could manage one container. Before applying anything: `terraform state rm`
   it from the OLD side (or retire the old stack). Don't touch old state casually —
   flag and coordinate.
+- **Raw `lxc.*` lines don't round-trip.** 110's config carries
+  `lxc.cgroup2.devices.allow: c 10:200 rwm` + `lxc.mount.entry: /dev/net dev/net …`
+  (the TUN device Gluetun/WireGuard needs). bpg does **not** model raw `lxc.*`
+  lines, so they can't live in HCL — they're out-of-band like `features{}`. Import
+  ignores them; a plan never proposes them. Leave them on the host.
+- **The docker-compose + VPN env are still OLD-repo-owned.** This repo's
+  `qbittorrent-vpn` role captures-in-place only: it asserts the three containers
+  (gluetun/qbittorrent/qbit-port-sync) are running and that the completed-download
+  path is correct — it does **not** template the compose or the Vault-sourced env.
+  Full ownership migration is deferred (declined in the PET-47 follow-up).
+- **qBittorrent rewrites `qBittorrent.conf` on shutdown.** So you cannot edit the
+  conf while qbit is running and expect it to stick — the next stop clobbers it.
+  Any config change (e.g. the completed-download path) is **stop → edit → start**,
+  never edit-then-restart. The role's correction block follows this and only fires
+  on drift, so a captured host `--check`s as a no-op.
+- **Completed downloads must save to `/downloads/completed/`, not `/downloads/`.**
+  With `Session\DefaultSavePath=/downloads/` (the old value) and empty *arr category
+  save_paths, finished torrents landed loose in the `/downloads` root beside the
+  `completed/` folder. Fix = `DefaultSavePath`/`Downloads\SavePath` →
+  `/downloads/completed/` (TempPath stays `/downloads/incomplete/`); categories
+  inherit the default. Applied live 2026-07-14 + captured by the role.
 - **VPN secrets go to Vault, not code.** Proton WireGuard key + qBit password →
   `kv/services/media/qbittorrent`. The existing **`ansible`** policy already grants
   `kv/data/services/* read`, so no policy change is needed to consume it — only a

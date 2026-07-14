@@ -1,0 +1,64 @@
+# GUARDED Seerr upgrade to {{ seerr_version }} (running baseline: 3.1.0). Runs
+# only with `-e seerr_upgrade=true`. Mirrors the community-scripts build path
+# (fetch release tarball -> pnpm install --frozen-lockfile -> pnpm build), the
+# same way this box was installed. SNAPSHOT LXC 101 FIRST — see
+# docs/runbooks/seerr-upgrade.md. Deliberately NOT check-mode safe (it rebuilds);
+# off by default so it never fires during capture.
+---
+- name: Refuse to run the upgrade in check mode (it rebuilds — not a no-op)
+  ansible.builtin.fail:
+    msg: "Seerr upgrade is not check-mode safe. Snapshot LXC 101, then run WITHOUT --check."
+  when: ansible_check_mode
+
+- name: Stop Seerr
+  ansible.builtin.systemd_service:
+    name: "{{ seerr_service }}"
+    state: stopped
+
+- name: Back up the Seerr data dir ({{ seerr_data_dir }})
+  ansible.builtin.command:
+    cmd: "cp -a {{ seerr_data_dir }} {{ seerr_data_dir }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+    creates: "{{ seerr_data_dir }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+
+- name: Download the Seerr release tarball (v{{ seerr_version }})
+  ansible.builtin.get_url:
+    url: "https://github.com/seerr-team/seerr/archive/refs/tags/v{{ seerr_version }}.tar.gz"
+    dest: "/tmp/seerr-{{ seerr_version }}.tar.gz"
+    mode: "0644"
+
+- name: Extract the release over the install dir (strip top-level; data dir untouched)
+  ansible.builtin.unarchive:
+    src: "/tmp/seerr-{{ seerr_version }}.tar.gz"
+    dest: "{{ seerr_install_dir }}"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+
+- name: Install dependencies (frozen lockfile, skip Cypress)
+  ansible.builtin.command:
+    cmd: pnpm install --frozen-lockfile
+    chdir: "{{ seerr_install_dir }}"
+  environment:
+    CYPRESS_INSTALL_BINARY: "0"
+  changed_when: true
+
+- name: Build Seerr
+  ansible.builtin.command:
+    cmd: pnpm build
+    chdir: "{{ seerr_install_dir }}"
+  environment:
+    NODE_OPTIONS: "--max-old-space-size=3072"
+  changed_when: true
+
+- name: Start Seerr
+  ansible.builtin.systemd_service:
+    name: "{{ seerr_service }}"
+    state: started
+
+- name: Wait for Seerr to answer on :5055
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5055/api/v1/status
+    status_code: [200]
+  register: seerr_status
+  retries: 10
+  delay: 6
+  until: seerr_status.status == 200

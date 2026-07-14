@@ -1,0 +1,4 @@
+---
+# sonarr's container timezone is America/Chicago (ground-truthed 2026-07-14),
+# overriding the media-base Etc/UTC default so `--check` stays a clean no-op.
+media_timezone: "America/Chicago"

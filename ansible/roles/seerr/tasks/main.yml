@@ -1,0 +1,15 @@
+# seerr — media requests (seerr-team/seerr, systemd :5055).
+# CAPTURE-IN-PLACE: asserts the running service so `--check` is a no-op. The
+# optional upgrade is imported only when seerr_upgrade=true, so a normal capture
+# pass never touches the running app. Config/db live at /opt/seerr/config on the
+# LXC rootfs (sdb3-storage) — see docs/data-volumes.md.
+---
+- name: Seerr service enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ seerr_service }}"
+    enabled: true
+    state: started
+
+- name: Upgrade Seerr (guarded — only when seerr_upgrade=true)
+  ansible.builtin.import_tasks: upgrade.yml
+  when: seerr_upgrade | bool

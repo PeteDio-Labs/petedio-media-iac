@@ -1,12 +1,18 @@
 # Configure the media hosts to match their running state (idempotent capture).
-# This session scopes the FIRST idempotent pass to prowlarr (109) — the lowest-
-# risk host. Run with --check FIRST to prove a clean no-op before any real run:
+# CAPTURE-IN-PLACE: every role asserts what the running community-script LXCs
+# already have, so `--check` is a clean no-op across all 7 hosts. Always --check
+# FIRST:
 #
 #   cd ansible
 #   ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory/hosts.yml \
-#     playbooks/configure-media.yml --limit prowlarr --check
+#     playbooks/configure-media.yml --check
 #
-# As each app's role is captured, add its block below and widen the --limit.
+# Scope to one host with `--limit <host>`. The only deliberate live change in this
+# repo — qBittorrent's completed-download path (/downloads/completed/) — was
+# applied out-of-band and is now captured by the qbittorrent-vpn role, so it too
+# is a no-op here (the role only re-asserts on drift). Per-host container timezone
+# comes from inventory/host_vars (America/Chicago for lidarr/seerr/sonarr/radarr;
+# Etc/UTC for plex/prowlarr/qbit via the media-base default).
 ---
 - name: Media base (all media hosts)
   hosts: media
@@ -14,13 +20,44 @@
   roles:
     - media-base
 
+- name: Lidarr
+  hosts: lidarr
+  gather_facts: false
+  roles:
+    - lidarr
+
+- name: Sonarr
+  hosts: sonarr
+  gather_facts: false
+  roles:
+    - sonarr
+
+- name: Radarr
+  hosts: radarr
+  gather_facts: false
+  roles:
+    - radarr
+
 - name: Prowlarr
   hosts: prowlarr
   gather_facts: false
   roles:
     - prowlarr
 
-# TODO (follow-up, PET-47): sonarr / radarr / lidarr / plex / seerr /
-# qbittorrent-vpn roles. qbittorrent-vpn's Gluetun/Proton secrets come from
-# Vault (kv/services/media/qbittorrent) read by a media-scoped policy — never
-# committed. See docs/GOTCHAS.md.
+- name: Plex
+  hosts: plex
+  gather_facts: false
+  roles:
+    - plex
+
+- name: Seerr
+  hosts: seerr
+  gather_facts: false
+  roles:
+    - seerr
+
+- name: VPN torrent stack (qBittorrent)
+  hosts: qbittorrent-vpn
+  gather_facts: false
+  roles:
+    - qbittorrent-vpn

@@ -1,0 +1,11 @@
+# radarr — movie manager (community-script LXC, :7878).
+# CAPTURE-IN-PLACE: asserts the already-running service so `--check` is a no-op.
+# The binary install is owned by the community-script installer; we capture the
+# service contract, not re-provision it. Config/db live at /var/lib/radarr on the
+# LXC rootfs (sdb3-storage) — see docs/data-volumes.md.
+---
+- name: Radarr service enabled and running
+  ansible.builtin.systemd_service:
+    name: radarr
+    enabled: true
+    state: started
