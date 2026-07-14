@@ -2,19 +2,22 @@
 # qbittorrent-vpn (LXC 110) — qBittorrent behind Gluetun/Proton, a three-service
 # Docker stack (gluetun + qbittorrent + qbit-port-sync).
 #
-# CAPTURE-IN-PLACE: this role asserts the stack is up and that completed downloads
-# land in the completed/ folder — it does NOT rewrite the docker-compose or the
-# VPN env, which are still owned by the OLD homelab-infra repo (reconcile deferred,
-# see docs/GOTCHAS.md). The completed-path fix itself was applied live out-of-band;
-# this role captures + drift-guards it.
+# CAPTURE-IN-PLACE: this role asserts the stack is up and that the download paths
+# are correct — it does NOT rewrite the docker-compose or the VPN env, which are
+# still owned by the OLD homelab-infra repo (reconcile deferred, see
+# docs/GOTCHAS.md). The path settings themselves were applied live out-of-band;
+# this role captures + drift-guards them.
 qbit_conf: /opt/qbittorrent-vpn/qbittorrent/config/qBittorrent/qBittorrent.conf
 
-# Completed torrents must save here (a subfolder of the /downloads bind-mount),
-# NOT the /downloads root — otherwise finished files land loose beside completed/.
-# The *arr categories (lidarr/radarr/tv-sonarr) have empty save_path and inherit
-# this default, so setting it here covers them too. Incomplete stays at
-# /downloads/incomplete/ (qBit's TempPath), which is already correct.
+# Completed torrents save here (a subfolder of the /downloads bind-mount), NOT the
+# /downloads root — otherwise finished files land loose beside completed/. The
+# *arr categories (lidarr/radarr/tv-sonarr) have empty save_path and inherit this
+# default, so setting it here covers them too.
 qbit_completed_path: /downloads/completed/
+
+# In-progress torrents download here and MOVE to completed/ when finished
+# (TempPathEnabled=true), so partial files never sit in completed/.
+qbit_incomplete_path: /downloads/incomplete/
 
 qbit_containers:
   - gluetun

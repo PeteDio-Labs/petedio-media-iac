@@ -4,10 +4,10 @@
 #
 # CAPTURE-IN-PLACE by default: the role only asserts the running service. The
 # upgrade path is GUARDED OFF (seerr_upgrade=false) and never runs during a normal
-# capture pass — enable it explicitly to move 3.1.0 -> seerr_version. See
-# docs/runbooks/seerr-upgrade.md.
+# capture pass — enable it explicitly to move the running build to seerr_version.
+# See docs/runbooks/seerr-upgrade.md. (Running 3.3.0 as of 2026-07-14.)
 seerr_upgrade: false
-seerr_version: "3.3.0" # target when seerr_upgrade=true (running baseline: 3.1.0)
+seerr_version: "3.3.0" # target when seerr_upgrade=true; bump for the next upgrade
 seerr_install_dir: /opt/seerr
 seerr_data_dir: /opt/seerr/config # settings.json + db.sqlite3 (preserve across upgrade)
 seerr_service: seerr

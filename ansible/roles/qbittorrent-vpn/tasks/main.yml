@@ -1,8 +1,9 @@
 # qbittorrent-vpn — assert the VPN torrent stack is running and that qBittorrent
-# saves completed downloads in the completed/ folder (not the /downloads root).
-# CAPTURE-IN-PLACE: `--check` is a clean no-op once the live config is correct
-# (which it is — the path fix was applied out-of-band). The read-only assertions
-# run in check mode (check_mode:false) so the drift guard below is always defined.
+# saves completed downloads in completed/ (not the /downloads root) while
+# in-progress downloads stage in incomplete/. CAPTURE-IN-PLACE: `--check` is a
+# clean no-op once the live config is correct (the path settings were applied
+# out-of-band). Read-only assertions run in check mode (check_mode:false) so the
+# drift guard is always defined.
 ---
 - name: Assert the qBittorrent VPN stack containers are running
   ansible.builtin.command: "docker top {{ item }}"
@@ -12,30 +13,42 @@
   # `docker top` exits non-zero unless the container is running, so this asserts
   # the whole stack is up without mutating anything (never reports "changed").
 
-- name: Detect qBittorrent completed-download path drift
-  ansible.builtin.command:
-    cmd: "grep -Fxq 'Session\\DefaultSavePath={{ qbit_completed_path }}' {{ qbit_conf }}"
-  register: qbit_savepath
+- name: Detect qBittorrent download-path config drift
+  ansible.builtin.shell:
+    cmd: >-
+      grep -Fxq 'Session\DefaultSavePath={{ qbit_completed_path }}' {{ qbit_conf }} &&
+      grep -Fxq 'Session\TempPathEnabled=true' {{ qbit_conf }} &&
+      grep -Fxq 'Session\TempPath={{ qbit_incomplete_path }}' {{ qbit_conf }} &&
+      grep -Fxq 'Downloads\SavePath={{ qbit_completed_path }}' {{ qbit_conf }}
+  register: qbit_paths
   changed_when: false
   failed_when: false
   check_mode: false
 
-# Correcting the path is a stop -> edit -> start sequence, NOT edit-then-restart:
+# Correcting the config is a stop -> edit -> start sequence, NOT edit-then-restart:
 # qBittorrent rewrites its conf on shutdown, so editing while it runs would be
 # clobbered on the next stop. This block only fires when drift is detected, so a
 # captured (already-correct) host never triggers it and `--check` stays a no-op.
-- name: Correct qBittorrent completed-download path (stop -> edit -> start)
-  when: qbit_savepath.rc != 0
+- name: Correct qBittorrent download paths (stop -> edit -> start)
+  when: qbit_paths.rc != 0
   block:
     - name: Stop qBittorrent (it persists its conf on shutdown)
       ansible.builtin.command: docker stop qbittorrent
       changed_when: true
 
-    - name: Point DefaultSavePath + SavePath at the completed folder
-      ansible.builtin.replace:
+    - name: Assert qBittorrent download-path preferences
+      community.general.ini_file:
         path: "{{ qbit_conf }}"
-        regexp: '^(Session\\DefaultSavePath|Downloads\\SavePath)=.*$'
-        replace: '\1={{ qbit_completed_path }}'
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        no_extra_spaces: true
+      loop:
+        - { section: BitTorrent, option: 'Session\DefaultSavePath', value: "{{ qbit_completed_path }}" }
+        - { section: BitTorrent, option: 'Session\TempPathEnabled', value: "true" }
+        - { section: BitTorrent, option: 'Session\TempPath', value: "{{ qbit_incomplete_path }}" }
+        - { section: Preferences, option: 'Downloads\SavePath', value: "{{ qbit_completed_path }}" }
+        - { section: Preferences, option: 'Downloads\TempPath', value: "{{ qbit_incomplete_path }}" }
 
     - name: Start qBittorrent
       ansible.builtin.command: docker start qbittorrent

@@ -26,7 +26,18 @@
     dest: "/tmp/seerr-{{ seerr_version }}.tar.gz"
     mode: "0644"
 
-- name: Extract the release over the install dir (strip top-level; data dir untouched)
+# Clean deploy: remove the old app tree first (keeping only the runtime data dir
+# and any backup). Extracting OVER the old tree leaves stale files — e.g. 3.3.0
+# dropped src/components/ToastContainer and the react-toast-notifications dep, so a
+# leftover 3.1.0 file fails the type-check. Mirrors community-scripts' clean deploy.
+- name: Remove the old Seerr app tree (keep the data dir + any backup)
+  ansible.builtin.shell:
+    cmd: >-
+      find {{ seerr_install_dir }} -mindepth 1 -maxdepth 1
+      ! -name 'config' ! -name 'config.bak-*' -exec rm -rf {} +
+  changed_when: true
+
+- name: Extract the release fresh (strip top-level; data dir untouched)
   ansible.builtin.unarchive:
     src: "/tmp/seerr-{{ seerr_version }}.tar.gz"
     dest: "{{ seerr_install_dir }}"
