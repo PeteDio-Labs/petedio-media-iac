@@ -55,6 +55,41 @@ ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --limit radar
 Guards are skip-not-fail, each with an override: `-e plex_update_force=true`,
 `-e qbit_update_force=true`, `-e seerr_update_enabled=true`.
 
+## Bringing the stack up and down
+
+```bash
+cd ansible
+ansible-playbook -i inventory/hosts.yml playbooks/stack-down.yml          # stop services
+ansible-playbook -i inventory/hosts.yml playbooks/stack-up.yml            # start + verify
+ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=off   # LXCs off too
+ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=on
+```
+
+Ordering is dependency-aware, consumers before producers on the way down and
+the exact reverse coming up:
+
+```
+down:  plex, seerr  →  sonarr, radarr, lidarr  →  prowlarr  →  qbittorrent-vpn
+up:    qbittorrent-vpn  →  prowlarr  →  sonarr, radarr, lidarr  →  seerr, plex
+```
+
+Each tier waits for its port to actually accept connections before the next
+starts — "systemd says active" is not "serving", and Lidarr runs a DB migration
+before it binds (hence its longer `media_health_timeout`).
+
+Plex and qBittorrent **refuse to stop while in use** (someone watching, something
+downloading) and say why; override with `-e media_lifecycle_force=true`.
+
+`stack-up.yml` ends by asserting the qBittorrent tunnel egress **differs from the
+host's** — a leak check that runs every single time the stack comes up, rather
+than something you have to remember to do.
+
+`stack-power.yml -e power=off` runs the graceful service shutdown *first*: pulling
+an LXC out from under a live Plex transcode or an active torrent is how library
+databases get corrupted. Run-state is deliberately **not** in Terraform — the
+module keeps `started` in `lifecycle.ignore_changes`, because CI applies on merge
+and an unrelated merge should never boot the stack back up.
+
 **Known limitation — registry rate limits.** Two of the three qbittorrent-vpn
 images come from `docker.io`, which caps anonymous pulls (100/6h per IP);
 `lscr.io` throttles bursts too. When that trips, the digest check reports those

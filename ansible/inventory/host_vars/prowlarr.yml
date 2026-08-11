@@ -7,3 +7,6 @@ servarr_api_version: "v1"
 # Genuinely UTC — unlike its three siblings. The mixed timezones across this
 # stack are organic (different installers, different days), not a decision.
 media_timezone: "Etc/UTC"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 9696

@@ -1,0 +1,49 @@
+# Anything downloading? qBittorrent resumes cleanly after a restart, so this is
+# courtesy rather than data safety — but a half-finished download that has to
+# re-verify on resume is still worth avoiding. Password is read from the host's
+# .env at runtime and never logged.
+---
+- name: qbit — read WebUI password from .env
+  ansible.builtin.slurp:
+    src: "{{ qbit_env_file }}"
+  register: lifecycle_qbit_env
+  check_mode: false
+  no_log: true
+
+- name: qbit — authenticate to the WebUI
+  ansible.builtin.uri:
+    url: "{{ qbit_api }}/api/v2/auth/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      username: "{{ qbit_user }}"
+      password: >-
+        {{ (lifecycle_qbit_env.content | b64decode
+            | regex_search('QBIT_WEBUI_PASSWORD=(.*)', '\1') | first | default('') | trim) }}
+    headers:
+      Referer: "{{ qbit_api }}"
+    timeout: 15
+  register: lifecycle_qbit_login
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: qbit — count active downloads
+  ansible.builtin.uri:
+    url: "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
+    headers:
+      Cookie: "{{ lifecycle_qbit_login.set_cookie | default('') }}"
+      Referer: "{{ qbit_api }}"
+    timeout: 15
+  register: lifecycle_qbit_active
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: qbit — record in-use state
+  ansible.builtin.set_fact:
+    media_in_use: >-
+      {{ ((lifecycle_qbit_active.json | default([]) | length) > 0)
+         if (lifecycle_qbit_active.status | default(0)) == 200 else false }}
+    media_in_use_reason: >-
+      {{ (lifecycle_qbit_active.json | default([]) | length) }} torrent(s) downloading

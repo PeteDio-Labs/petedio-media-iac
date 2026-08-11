@@ -1,0 +1,63 @@
+# Bring the media stack DOWN, gracefully, in dependency order.
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml playbooks/stack-down.yml
+#
+# Order is consumers-before-producers, so nothing is stopped mid-handoff:
+#
+#   1. plex + seerr      user-facing — stop first so nobody is cut off mid-action
+#   2. sonarr/radarr/lidarr   importers — they consume from qBittorrent
+#   3. prowlarr          indexer — the *arr apps query it, so it outlives them
+#   4. qbittorrent-vpn   downloader — last, so imports upstream have settled
+#
+# Plex and qBittorrent REFUSE to stop while genuinely in use (someone watching,
+# something downloading) and say so. Force with:
+#   -e media_lifecycle_force=true
+#
+# This stops services, not containers — the LXCs stay up so `stack-up.yml` is
+# near-instant. To power the containers off entirely, use stack-power.yml.
+---
+- name: Media stack down — 1/4 user-facing (plex, seerr)
+  hosts: plex,seerr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: stopped
+  roles:
+    - media-lifecycle
+
+- name: Media stack down — 2/4 importers (sonarr, radarr, lidarr)
+  hosts: sonarr,radarr,lidarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: stopped
+  roles:
+    - media-lifecycle
+
+- name: Media stack down — 3/4 indexer (prowlarr)
+  hosts: prowlarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: stopped
+  roles:
+    - media-lifecycle
+
+- name: Media stack down — 4/4 downloader (qbittorrent-vpn)
+  hosts: qbittorrent-vpn
+  gather_facts: false
+  vars:
+    media_lifecycle_state: stopped
+  roles:
+    - media-lifecycle
+
+- name: Media stack down — report
+  hosts: media
+  gather_facts: false
+  tasks:
+    - name: Summarise
+      run_once: true
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: >-
+          Media stack stopped. LXCs are still running — `stack-up.yml` brings the
+          services back. Use stack-power.yml to power the containers off.

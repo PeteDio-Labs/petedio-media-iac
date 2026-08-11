@@ -2,3 +2,8 @@
 ---
 servarr_api_version: "v1"
 media_timezone: "America/Chicago"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 8686
+# Lidarr runs a DB migration before it binds; give it longer than the others.
+media_health_timeout: 300

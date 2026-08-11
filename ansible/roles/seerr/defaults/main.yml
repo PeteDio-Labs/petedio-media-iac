@@ -28,3 +28,10 @@ seerr_min_free_mb: 3072
 seerr_build_timeout: 1800
 seerr_start_wait_retries: 30
 seerr_start_wait_delay: 10
+
+# How many pre-upgrade config backups to keep in /root. These are small (~500KB)
+# because they hold config only, but they are worthless once a newer one exists
+# and the upgrade is proven — and unretained backups are how this 12G disk got
+# to 40% (a 493MB full-tree tarball from the 3.1.0 upgrade sat there for a
+# month). Retention runs on every converge, not just on upgrade.
+seerr_backup_keep: 3
