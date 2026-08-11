@@ -128,10 +128,18 @@ jobs:
         run: terraform plan -input=false -no-color -out=tfplan
 
       # Apply-on-merge stays OPT-IN for the brownfield capture: gated behind the repo variable
-      # MEDIA_APPLY_ENABLED == 'true'. Until then merges run validate + plan but never apply, so the
-      # qbittorrent-vpn dual-state caveat (old homelab-infra TF still manages 110) can't trigger an
-      # unintended apply. Flip the variable on once the imports land a clean no-op plan and the
-      # old-side state rm is done. See docs/GOTCHAS.md.
+      # MEDIA_APPLY_ENABLED == 'true'. This gate existed for the qbittorrent-vpn dual-state caveat
+      # (the retired homelab-infra TF was believed to also manage 110), and its stated exit
+      # conditions were "the imports land a clean no-op plan" and "the old-side state rm is done".
+      #
+      # ENABLED 2026-08-11 — both verified, not assumed:
+      #   - the tfstate bucket holds exactly three objects (homelab/terraform.tfstate,
+      #     homelab/vault-config.tfstate, media/terraform.tfstate). There is no homelab-infra
+      #     state left to conflict with, so there is no old side to rm.
+      #   - `terraform state list` on petedio-iac returns no media VMID (100-110).
+      #   - a full plan against the live cluster is a clean no-op for every container: the only
+      #     changes were add-only pool memberships.
+      # See docs/GOTCHAS.md.
       - name: Apply
         if: ${{ vars.MEDIA_APPLY_ENABLED == 'true' }}
         run: terraform apply -input=false tfplan
