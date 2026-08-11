@@ -107,3 +107,26 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `plexmediaserver.sources` (`repo.plex.tv`). Harmless while apt picks the
   highest version, but a downgrade footgun. Removed via
   `media_base_stale_apt_sources`.
+- **Comparing the wrong two digests marks every multi-arch image "behind".**
+  `docker image inspect .RepoDigests` holds the **manifest-LIST** digest (what
+  `docker pull` resolved for a floating tag). `docker manifest inspect -v`
+  returns one entry **per platform** — its `Descriptor.digest` is a per-platform
+  manifest digest, plus (on modern builds) two `unknown/unknown` attestation
+  entries. The two values can never be equal, so the naive comparison reports a
+  permanent false "update available" — verified: `alpine:3.20`, untouched for
+  months, read as behind until this was fixed. Read the remote side from the
+  registry's `Docker-Content-Digest` header (anonymous token → `HEAD
+  /v2/<repo>/manifests/<tag>` with the index media types in `Accept`); that is
+  exactly what `RepoDigests` stores.
+- **`--no-deps` is wrong for gluetun.** qbittorrent and port-sync use
+  `network_mode: service:gluetun`, so they live *inside* gluetun's network
+  namespace. Recreating gluetun creates a NEW namespace and strands anything
+  still pointed at the old one (running, but with no network). A gluetun update
+  must recreate its dependents too; `--no-deps` is only correct for the other
+  services, where it avoids dropping the tunnel just to restart qBittorrent.
+  Always verify after: host egress and in-tunnel egress must be **different**
+  IPs (leak check), and both tunnel containers must report the same one.
+- **Pull per service, not per stack.** `docker compose pull` with no arguments
+  pulls everything, so a rate-limited image that is already current aborts the
+  update of an image that genuinely needs it — on a different, unthrottled
+  registry. Pull only the services the digest check flagged.

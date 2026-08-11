@@ -55,13 +55,27 @@ ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --limit radar
 Guards are skip-not-fail, each with an override: `-e plex_update_force=true`,
 `-e qbit_update_force=true`, `-e seerr_update_enabled=true`.
 
-**Known limitation — Docker Hub rate limits.** Two of the three qbittorrent-vpn
-images come from `docker.io`, which caps anonymous pulls (100/6h per IP). When
-that trips, both the digest check and the pull fail with HTTP 429; the run
-reports the images as `NOT CHECKED` rather than pretending they are current, and
-compose aborts before recreating anything (the running stack is left untouched).
-The real fix is to point `docker.io` at the homelab Nexus pull-through cache —
-not yet wired up.
+**Known limitation — registry rate limits.** Two of the three qbittorrent-vpn
+images come from `docker.io`, which caps anonymous pulls (100/6h per IP);
+`lscr.io` throttles bursts too. When that trips, the digest check reports those
+images as `NOT CHECKED` rather than pretending they are current. Pulls are done
+**per service**, so one throttled-but-current image can't block updating a
+different one that is genuinely stale. The durable fix is pointing `docker.io`
+at the homelab Nexus pull-through cache — not yet wired up.
+
+**Two things the qbittorrent-vpn role gets right that are easy to get wrong:**
+
+- *Digest comparison.* `docker image inspect .RepoDigests` records the
+  **manifest-list** digest, while `docker manifest inspect -v` returns one entry
+  **per platform**. Those are structurally different values, so comparing them —
+  the obvious thing to reach for — marks every multi-arch image permanently
+  "behind". The remote side is therefore read from the registry's own
+  `Docker-Content-Digest` for the tag, which is exactly what `RepoDigests` holds.
+- *gluetun's dependents.* qbittorrent and port-sync run with
+  `network_mode: service:gluetun`. Recreating gluetun makes a new network
+  namespace, stranding anything still attached to the old one — so a gluetun
+  update deliberately recreates the whole stack, while any other service is
+  recreated with `--no-deps` so the VPN tunnel isn't dropped needlessly.
 
 **Not yet templated:** `qbittorrent-vpn`'s `docker-compose.yml` is captured at
 runtime only, not rendered from this repo. Its header still claims it comes from
