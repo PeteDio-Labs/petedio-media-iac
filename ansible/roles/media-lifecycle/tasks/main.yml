@@ -1,0 +1,75 @@
+# media-lifecycle — stop or start one media host's service.
+#
+# Deliberately service-level, not container-level. Stopping the systemd unit (or
+# the compose project) is fast, graceful, and leaves the LXC up so the next start
+# is instant. Use stack-power.yml when you want the containers themselves off to
+# reclaim RAM on pve01.
+---
+- name: "{{ inventory_hostname }} — check whether it is in use before stopping"
+  when:
+    - media_lifecycle_state == 'stopped'
+    - not (media_lifecycle_force | bool)
+  block:
+    - name: "{{ inventory_hostname }} — probe in-use signal"
+      ansible.builtin.include_tasks: "in-use-{{ inventory_hostname }}.yml"
+      when: inventory_hostname in ['plex', 'qbittorrent-vpn']
+
+# ------------------------------------------------------------------- stop --
+- name: "{{ inventory_hostname }} — stop the systemd service"
+  ansible.builtin.systemd_service:
+    name: "{{ media_service_unit }}"
+    state: stopped
+  when:
+    - media_lifecycle_state == 'stopped'
+    - media_service_kind == 'systemd'
+    - not (media_in_use | default(false))
+
+- name: "{{ inventory_hostname }} — stop the compose project"
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbit_dir }}"
+    state: stopped
+  when:
+    - media_lifecycle_state == 'stopped'
+    - media_service_kind == 'compose'
+    - not (media_in_use | default(false))
+
+- name: "{{ inventory_hostname }} — SKIPPED, still in use"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} left running: {{ media_in_use_reason | default('in use') }}.
+      Re-run with -e media_lifecycle_force=true to stop it anyway.
+  when:
+    - media_lifecycle_state == 'stopped'
+    - media_in_use | default(false)
+
+# ------------------------------------------------------------------ start --
+- name: "{{ inventory_hostname }} — start the systemd service"
+  ansible.builtin.systemd_service:
+    name: "{{ media_service_unit }}"
+    state: started
+    enabled: true
+  when:
+    - media_lifecycle_state == 'started'
+    - media_service_kind == 'systemd'
+
+- name: "{{ inventory_hostname }} — start the compose project"
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbit_dir }}"
+    state: present
+  when:
+    - media_lifecycle_state == 'started'
+    - media_service_kind == 'compose'
+
+# A unit that is "active" has not necessarily bound its port yet — these apps
+# take seconds (Plex) to a minute (Lidarr's DB migration) before they serve.
+# The port check is what makes stack-up.yml's ordering meaningful: prowlarr is
+# genuinely ready before sonarr starts asking it for indexers.
+- name: "{{ inventory_hostname }} — wait for port {{ media_health_port }} to serve"
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ media_health_port }}"
+    timeout: "{{ media_health_timeout }}"
+    state: started
+  when:
+    - media_lifecycle_state == 'started'
+    - media_health_port | int > 0

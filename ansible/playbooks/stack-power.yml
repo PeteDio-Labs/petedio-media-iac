@@ -1,0 +1,85 @@
+# Power the media LXCs themselves off/on at the Proxmox level, to actually
+# reclaim RAM and CPU on pve01 (stack-down.yml only stops services; the
+# containers keep their memory).
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=off
+#   ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=on
+#
+# `off` runs stack-down.yml's graceful service shutdown FIRST — pulling the
+# container out from under a running Plex transcode or an active torrent is how
+# you corrupt a library database. `on` starts the containers, then hands over to
+# stack-up.yml for the ordered service start and the VPN leak check.
+#
+# WHY NOT TERRAFORM: the LXC module deliberately keeps `started` in
+# lifecycle.ignore_changes (see modules/proxmox-lxc/main.tf). Managing run-state
+# in Terraform would mean every `plan` reports a stopped container as drift —
+# and because CI applies on merge, an unrelated merge could silently boot the
+# whole stack back up. Run-state is an operational concern, not a declared one.
+---
+- name: Validate the requested power state
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Require -e power=on|off
+      ansible.builtin.assert:
+        that: power | default('') in ['on', 'off']
+        fail_msg: "Pass -e power=on or -e power=off."
+
+- name: Graceful service shutdown before powering containers off
+  ansible.builtin.import_playbook: stack-down.yml
+  when: power == 'off'
+
+- name: Power the containers
+  hosts: pve01
+  gather_facts: false
+  vars:
+    # VMIDs of the seven captured media LXCs. Order mirrors stack-down/up:
+    # shut down consumers first, boot producers first.
+    media_vmids_shutdown_order: [103, 101, 104, 105, 100, 109, 110]
+    media_vmids_boot_order: [110, 109, 100, 105, 104, 101, 103]
+  tasks:
+    - name: Stop the media containers
+      ansible.builtin.command: "pct shutdown {{ item }} --timeout 120"
+      loop: "{{ media_vmids_shutdown_order }}"
+      when: power == 'off'
+      register: pct_stop
+      changed_when: pct_stop.rc == 0
+      # A container that is already stopped exits non-zero; that is success here.
+      failed_when:
+        - pct_stop.rc != 0
+        - "'not running' not in (pct_stop.stderr | default('') | lower)"
+
+    - name: Start the media containers
+      ansible.builtin.command: "pct start {{ item }}"
+      loop: "{{ media_vmids_boot_order }}"
+      when: power == 'on'
+      register: pct_start
+      changed_when: pct_start.rc == 0
+      failed_when:
+        - pct_start.rc != 0
+        - "'already running' not in (pct_start.stderr | default('') | lower)"
+
+    - name: Report container states
+      ansible.builtin.command: "pct list"
+      register: pct_list
+      changed_when: false
+
+    - name: Show media container states
+      ansible.builtin.debug:
+        msg: "{{ pct_list.stdout_lines | select('search', '(100|101|103|104|105|109|110)') | list }}"
+
+# Containers need a moment for sshd before Ansible can reach them; stack-up's
+# per-tier port waits absorb the rest.
+- name: Wait for the containers to accept SSH
+  hosts: media
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      when: power == 'on'
+
+- name: Ordered service start after power-on
+  ansible.builtin.import_playbook: stack-up.yml
+  when: power == 'on'

@@ -1,0 +1,22 @@
+# media-lifecycle — bring an individual media host's service up or down.
+# The ORDER across hosts is the playbooks' job (stack-up / stack-down); this role
+# only knows how to stop/start one host and prove it came back.
+---
+# started | stopped — set by the calling play.
+media_lifecycle_state: started
+
+# systemd | compose. Per host in host_vars/.
+media_service_kind: systemd
+
+# systemd unit name. Defaults to the inventory hostname, which is correct for
+# the four *arr apps and seerr; plex overrides it (plexmediaserver).
+media_service_unit: "{{ inventory_hostname }}"
+
+# TCP port used to prove the service is actually serving after a start. A port
+# check needs no API key and works uniformly across all seven hosts.
+media_health_port: 0
+media_health_timeout: 180
+
+# Refuse to stop a host that is actively in use (Plex streaming, qBittorrent
+# downloading). Override with -e media_lifecycle_force=true.
+media_lifecycle_force: false

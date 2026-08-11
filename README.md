@@ -19,10 +19,106 @@ environments/media/         # the media environment
   variables.tf              #   proxmox endpoint/token, ssh_public_key
   media.tf                  #   one module block per running LXC (ground-truthed)
   terraform.tfvars.example  #   template (real tfvars is gitignored)
-ansible/                    # host config to match the running services (idempotent)
+ansible/                    # host config + update management (idempotent)
+  inventory/hosts.yml       #   `media` (all) + `servarr` (the four *arr apps)
+  inventory/host_vars/      #   per-host captured reality (timezone, API version)
+  roles/media-base/         #   baseline shared by every media LXC
+  roles/servarr/            #   ONE role for sonarr/radarr/lidarr/prowlarr
+  roles/plex/               #   apt-managed Plex
+  roles/seerr/              #   build-from-source seerr
+  roles/qbittorrent-vpn/    #   the gluetun/qbittorrent compose stack
+  playbooks/media-roles.yml #   shared play body (both entry points import it)
 docs/GOTCHAS.md             # media-specific gotchas (+ pointer to petedio-iac's)
 .github/workflows/          # Workflow B — plan-on-PR, apply-on-merge (self-hosted runner)
 ```
+
+## Update management
+
+Every service reports its version and updates through its own vendor-supported
+path. One shared play body backs both entry points, so what you dry-run is
+exactly what applies.
+
+```bash
+cd ansible
+ansible-playbook -i inventory/hosts.yml playbooks/check-updates.yml   # read-only report
+ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml    # apply
+ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --limit radarr
+```
+
+| Service | Mechanism | Notes |
+|---|---|---|
+| sonarr / radarr / lidarr / prowlarr | the app's own `builtIn` updater, over its REST API | one `servarr` role; verifies it returns on the target version |
+| plex | apt (`repo.plex.tv`) | skips while anyone is watching |
+| seerr | GitHub source tag + `pnpm build` | opt-in; atomic tree swap with rollback |
+| qbittorrent-vpn | `docker compose pull` | skips while torrents are downloading; verifies VPN egress after |
+
+Guards are skip-not-fail, each with an override: `-e plex_update_force=true`,
+`-e qbit_update_force=true`, `-e seerr_update_enabled=true`.
+
+## Bringing the stack up and down
+
+```bash
+cd ansible
+ansible-playbook -i inventory/hosts.yml playbooks/stack-down.yml          # stop services
+ansible-playbook -i inventory/hosts.yml playbooks/stack-up.yml            # start + verify
+ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=off   # LXCs off too
+ansible-playbook -i inventory/hosts.yml playbooks/stack-power.yml -e power=on
+```
+
+Ordering is dependency-aware, consumers before producers on the way down and
+the exact reverse coming up:
+
+```
+down:  plex, seerr  →  sonarr, radarr, lidarr  →  prowlarr  →  qbittorrent-vpn
+up:    qbittorrent-vpn  →  prowlarr  →  sonarr, radarr, lidarr  →  seerr, plex
+```
+
+Each tier waits for its port to actually accept connections before the next
+starts — "systemd says active" is not "serving", and Lidarr runs a DB migration
+before it binds (hence its longer `media_health_timeout`).
+
+Plex and qBittorrent **refuse to stop while in use** (someone watching, something
+downloading) and say why; override with `-e media_lifecycle_force=true`.
+
+`stack-up.yml` ends by asserting the qBittorrent tunnel egress **differs from the
+host's** — a leak check that runs every single time the stack comes up, rather
+than something you have to remember to do.
+
+`stack-power.yml -e power=off` runs the graceful service shutdown *first*: pulling
+an LXC out from under a live Plex transcode or an active torrent is how library
+databases get corrupted. Run-state is deliberately **not** in Terraform — the
+module keeps `started` in `lifecycle.ignore_changes`, because CI applies on merge
+and an unrelated merge should never boot the stack back up.
+
+**Known limitation — registry rate limits.** Two of the three qbittorrent-vpn
+images come from `docker.io`, which caps anonymous pulls (100/6h per IP);
+`lscr.io` throttles bursts too. When that trips, the digest check reports those
+images as `NOT CHECKED` rather than pretending they are current. Pulls are done
+**per service**, so one throttled-but-current image can't block updating a
+different one that is genuinely stale. The durable fix is pointing `docker.io`
+at the homelab Nexus pull-through cache — not yet wired up.
+
+**Two things the qbittorrent-vpn role gets right that are easy to get wrong:**
+
+- *Digest comparison.* `docker image inspect .RepoDigests` records the
+  **manifest-list** digest, while `docker manifest inspect -v` returns one entry
+  **per platform**. Those are structurally different values, so comparing them —
+  the obvious thing to reach for — marks every multi-arch image permanently
+  "behind". The remote side is therefore read from the registry's own
+  `Docker-Content-Digest` for the tag, which is exactly what `RepoDigests` holds.
+- *gluetun's dependents.* qbittorrent and port-sync run with
+  `network_mode: service:gluetun`. Recreating gluetun makes a new network
+  namespace, stranding anything still attached to the old one — so a gluetun
+  update deliberately recreates the whole stack, while any other service is
+  recreated with `--no-deps` so the VPN tunnel isn't dropped needlessly.
+
+**Not yet templated:** `qbittorrent-vpn`'s `docker-compose.yml` is captured at
+runtime only, not rendered from this repo. Its header still claims it comes from
+`infrastructure/ansible/templates/…` in the retired `homelab-infra` repo (and
+calls the container "LXC 120" — it is 110), so in practice it is unmanaged.
+Templating it means first bringing the Proton WireGuard key and qBit WebUI
+password into this repo's Vault scope; the `.env` holding them is deliberately
+not committed.
 
 ## Captured hosts (live VMID/IP — renumber to 21x deferred, PET-49)
 

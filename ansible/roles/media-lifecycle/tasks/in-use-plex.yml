@@ -1,0 +1,33 @@
+# Is anyone watching? Stopping Plex mid-stream kills the playback and any
+# in-flight transcode. Token comes from Preferences.xml and is sent as a header,
+# never in the query string.
+---
+- name: Plex — read PlexOnlineToken
+  ansible.builtin.slurp:
+    src: "{{ plex_prefs_path }}"
+  register: lifecycle_plex_prefs
+  check_mode: false
+  no_log: true
+
+- name: Plex — count active playback sessions
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_port }}/status/sessions"
+    headers:
+      X-Plex-Token: >-
+        {{ (lifecycle_plex_prefs.content | b64decode
+            | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
+    return_content: true
+    timeout: 15
+  register: lifecycle_plex_sessions
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Plex — record in-use state
+  ansible.builtin.set_fact:
+    media_in_use: >-
+      {{ ((lifecycle_plex_sessions.content | default('')
+           | regex_search('size="(\d+)"', '\1') | first | default('0')) | int) > 0 }}
+    media_in_use_reason: >-
+      {{ (lifecycle_plex_sessions.content | default('')
+          | regex_search('size="(\d+)"', '\1') | first | default('0')) }} active playback session(s)

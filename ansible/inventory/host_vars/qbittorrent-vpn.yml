@@ -1,0 +1,19 @@
+# qbittorrent-vpn 110/.21 — Gluetun (ProtonVPN) + qBittorrent + port-sync.
+---
+# The LXC itself is UTC. Note the *containers* run America/Los_Angeles via TZ in
+# docker-compose.yml — a third timezone in this stack. Left as-is; it is the
+# container's display setting, not the host's.
+media_timezone: "Etc/UTC"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+# Driven through docker compose rather than a systemd unit.
+media_service_kind: compose
+media_health_port: 8080
+
+# Host facts, declared here rather than only in roles/qbittorrent-vpn/defaults
+# because the media-lifecycle role needs the same values for its "anything
+# downloading?" probe. host_vars beats role defaults — single source for both.
+qbit_dir: /opt/qbittorrent-vpn
+qbit_env_file: /opt/qbittorrent-vpn/.env
+qbit_api: "http://localhost:8080"
+qbit_user: admin

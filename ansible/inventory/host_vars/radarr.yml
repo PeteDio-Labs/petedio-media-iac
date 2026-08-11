@@ -1,0 +1,7 @@
+# radarr 105/.16 — movies. Servarr API v3, branch `master`.
+---
+servarr_api_version: "v3"
+media_timezone: "America/Chicago"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 7878

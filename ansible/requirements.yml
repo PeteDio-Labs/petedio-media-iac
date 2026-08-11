@@ -2,3 +2,7 @@
 collections:
   - name: community.general
     version: ">=10.0.0"
+  # docker_compose_v2 — drives the qbittorrent-vpn stack (gluetun + qbittorrent
+  # + port-sync) through the docker CLI already present on LXC 110.
+  - name: community.docker
+    version: ">=4.0.0"

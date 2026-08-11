@@ -1,0 +1,11 @@
+# seerr 101/.33 — request manager. sdb3-storage, eth1-only, no bind-mounts.
+---
+media_timezone: "America/Chicago"
+
+# seerr is the only build-from-source upgrade in the stack (no release assets
+# published), so it stays opt-in. Set true here — or pass
+# -e seerr_update_enabled=true — when you can watch the build.
+seerr_update_enabled: false
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 5055

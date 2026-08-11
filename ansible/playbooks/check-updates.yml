@@ -1,0 +1,21 @@
+# Read-only: report the current and available version of every media service.
+# Changes nothing (`media_update_apply: false`), so it is safe to run any time,
+# including on a schedule.
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml playbooks/check-updates.yml
+#
+# Limit to one service the usual way:
+#   ... playbooks/check-updates.yml --limit plex
+---
+- name: Media stack — check for updates
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Report mode
+      ansible.builtin.debug:
+        msg: "Read-only check. Nothing will be modified."
+
+- ansible.builtin.import_playbook: media-roles.yml
+  vars:
+    media_update_apply: false

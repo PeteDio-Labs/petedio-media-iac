@@ -1,0 +1,10 @@
+# sonarr 104/.15 — TV. Servarr API v3, branch `main`.
+---
+servarr_api_version: "v3"
+
+# Captured reality, not a preference — this host has run America/Chicago since
+# it was built. See roles/media-base/defaults/main.yml.
+media_timezone: "America/Chicago"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 8989

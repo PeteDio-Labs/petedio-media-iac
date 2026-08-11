@@ -1,0 +1,90 @@
+# Bring the media stack UP, in dependency order, verifying each tier serves
+# before the next one starts.
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml playbooks/stack-up.yml
+#
+# Exact reverse of stack-down.yml — producers before consumers:
+#
+#   1. qbittorrent-vpn   the VPN tunnel must be up before anything expects downloads
+#   2. prowlarr          the *arr apps query it for indexers on startup
+#   3. sonarr/radarr/lidarr
+#   4. seerr + plex      user-facing last, so the stack is whole when users arrive
+#
+# Each tier waits for its port to actually accept connections before the next
+# starts — "systemd says active" is not the same as "serving", and Lidarr in
+# particular runs a DB migration before it binds.
+---
+- name: Media stack up — 1/4 downloader (qbittorrent-vpn)
+  hosts: qbittorrent-vpn
+  gather_facts: false
+  vars:
+    media_lifecycle_state: started
+  roles:
+    - media-lifecycle
+
+- name: Media stack up — 2/4 indexer (prowlarr)
+  hosts: prowlarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: started
+  roles:
+    - media-lifecycle
+
+- name: Media stack up — 3/4 importers (sonarr, radarr, lidarr)
+  hosts: sonarr,radarr,lidarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: started
+  roles:
+    - media-lifecycle
+
+- name: Media stack up — 4/4 user-facing (seerr, plex)
+  hosts: seerr,plex
+  gather_facts: false
+  vars:
+    media_lifecycle_state: started
+  roles:
+    - media-lifecycle
+
+# The VPN is the one thing whose failure is silent AND consequential: qBittorrent
+# shares gluetun's namespace, so if the tunnel came up wrong the client either
+# has no network (safe) or — if the compose file were ever changed — could be on
+# the home IP. Assert the two differ every time the stack comes up.
+- name: Media stack up — verify VPN egress differs from the host
+  hosts: qbittorrent-vpn
+  gather_facts: false
+  tasks:
+    - name: Read host egress IP
+      ansible.builtin.command: curl -s -m 15 https://ipinfo.io/ip
+      register: stack_host_ip
+      changed_when: false
+
+    - name: Read in-tunnel egress IP
+      ansible.builtin.command: docker exec gluetun wget -qO- -T 15 https://ipinfo.io/ip
+      register: stack_vpn_ip
+      changed_when: false
+
+    - name: Assert qBittorrent is not on the home IP
+      ansible.builtin.assert:
+        that:
+          - (stack_vpn_ip.stdout | trim | length) > 0
+          - (stack_vpn_ip.stdout | trim) != (stack_host_ip.stdout | trim)
+        fail_msg: >-
+          VPN LEAK CHECK FAILED — in-tunnel egress ({{ stack_vpn_ip.stdout | trim }})
+          matches the host egress ({{ stack_host_ip.stdout | trim }}).
+          Stop qBittorrent and investigate gluetun before seeding anything.
+        success_msg: >-
+          VPN OK — host {{ stack_host_ip.stdout | trim }},
+          tunnel {{ stack_vpn_ip.stdout | trim }}.
+
+- name: Media stack up — report
+  hosts: media
+  gather_facts: false
+  tasks:
+    - name: Summarise
+      run_once: true
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "Media stack up — all tiers started and serving on their ports."

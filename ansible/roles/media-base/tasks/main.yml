@@ -2,11 +2,15 @@
 # CAPTURE-IN-PLACE: these tasks assert what the running community-script
 # containers ALREADY have, so `--check` is a clean no-op. This is documentation-
 # as-code of the baseline, NOT a reconfiguration. Add app-specific roles
-# (prowlarr/sonarr/...) on top; keep this one app-agnostic.
+# (servarr/plex/seerr/...) on top; keep this one app-agnostic.
 ---
-- name: Timezone is UTC (matches the running media hosts)
+# Asserts the timezone each host ACTUALLY runs (see host_vars/), not a
+# stack-wide default. Skipped entirely when unset — see defaults/main.yml for
+# why that matters.
+- name: Timezone matches the captured per-host value
   community.general.timezone:
-    name: "{{ media_timezone | default('Etc/UTC') }}"
+    name: "{{ media_timezone }}"
+  when: (media_timezone | default('') | length) > 0
 
 - name: Base packages present (curl/ca-certificates — already installed by the installer)
   ansible.builtin.apt:
@@ -14,3 +18,18 @@
     state: present
     update_cache: false
   # update_cache:false so a check run never proposes refreshing apt metadata.
+
+# The one intentionally *corrective* task in this role: a stale apt source is
+# drift, not baseline. Declared per host so the cleanup is auditable in
+# inventory rather than buried in a role.
+- name: Stale apt sources removed
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/{{ item }}"
+    state: absent
+  loop: "{{ media_base_stale_apt_sources }}"
+  register: media_base_stale_removed
+
+- name: Refresh apt cache after removing a stale source
+  ansible.builtin.apt:
+    update_cache: true
+  when: media_base_stale_removed is changed

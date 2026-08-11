@@ -1,0 +1,13 @@
+# plex 103 — Plex Media Server, apt-installed from repo.plex.tv.
+---
+plex_package: plexmediaserver
+plex_service: plexmediaserver
+plex_port: 32400
+
+# Preferences.xml holds PlexOnlineToken, which the session probe needs.
+plex_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# Refuse to restart Plex while someone is watching. Override with
+# `-e plex_update_force=true` to update regardless.
+plex_update_force: false
