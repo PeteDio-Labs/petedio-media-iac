@@ -13,6 +13,28 @@ qbit_user: admin
 qbit_health_retries: 30
 qbit_health_delay: 10
 
+# ------------------------------------------------------------------- images --
+# The two docker.io images are pulled through the homelab registry's
+# pull-through cache instead of Docker Hub directly. Anonymous Hub pulls are
+# capped at 100/6h per IP, and that cap has already aborted an update run on
+# this stack — the pull failed for gluetun and alpine (both docker.io) while the
+# image that actually needed updating sat on a different registry.
+#
+# The cache is on-demand: the first pull of a tag fetches from Hub and stores it,
+# later pulls are served locally. The `docker-hub/` prefix is zot's sync
+# destination, and note the `library/` segment — Docker's implicit namespace for
+# official images has to be spelled out once you address them by full path.
+#
+# qbittorrent goes through the cache too. lscr.io is not subject to the Hub cap,
+# but its burst limiter is aggressive enough that the digest check against it
+# intermittently returns nothing — reported honestly as NOT CHECKED, which means
+# a real qBittorrent update could sit unnoticed. Caching it makes the update
+# check deterministic rather than dependent on someone else's rate limiter.
+qbit_registry: "docker.pdlab.dev"
+qbit_image_gluetun: "{{ qbit_registry }}/docker-hub/qmcgaw/gluetun:latest"
+qbit_image_portsync: "{{ qbit_registry }}/docker-hub/library/alpine:3.20"
+qbit_image_qbittorrent: "{{ qbit_registry }}/lscr-io/linuxserver/qbittorrent:latest"
+
 # Pulling restarts the containers. qBittorrent resumes its torrents on restart,
 # so this is a courtesy rather than a data-safety gate — but interrupting an
 # active download is still rude. Override with -e qbit_update_force=true.

@@ -24,6 +24,28 @@
     that: qbit_compose_stat.stat.exists
     fail_msg: "{{ qbit_compose_file }} not found — the stack is not deployed as expected."
 
+# Keep one copy of whatever was on the host before this role first rendered it.
+# The previous file was written by a repo that no longer exists, so if the
+# template turns out to differ in some way that matters, this is the only
+# reference to diff against.
+- name: qbit — preserve the pre-Ansible compose file (once)
+  ansible.builtin.copy:
+    src: "{{ qbit_compose_file }}"
+    dest: "{{ qbit_compose_file }}.pre-ansible"
+    remote_src: true
+    force: false
+    mode: "0644"
+
+- name: qbit — render the compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ qbit_compose_file }}"
+    mode: "0644"
+    # `docker compose config` resolves the file AND its .env; a syntax error or a
+    # missing variable fails here rather than after the live file is overwritten.
+    validate: "docker compose --project-directory {{ qbit_dir }} -f %s config -q"
+  register: qbit_compose_rendered
+
 - name: qbit — stack is up
   community.docker.docker_compose_v2:
     project_src: "{{ qbit_dir }}"
