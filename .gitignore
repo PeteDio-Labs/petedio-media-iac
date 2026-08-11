@@ -21,3 +21,5 @@ plan.txt
 
 # Ansible
 *.retry
+
+.DS_Store

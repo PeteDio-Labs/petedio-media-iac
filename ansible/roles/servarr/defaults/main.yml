@@ -1,0 +1,24 @@
+# servarr — shared defaults for sonarr / radarr / lidarr / prowlarr.
+# Per-host overrides live in inventory/host_vars/<app>.yml; the only two that
+# genuinely differ are the app name and the API version.
+---
+# Lowercase app + systemd unit name (sonarr|radarr|lidarr|prowlarr).
+servarr_app: "{{ inventory_hostname }}"
+servarr_service: "{{ servarr_app }}"
+
+# Data dir holds config.xml (API key + port). Install dir holds the binary the
+# built-in updater swaps out.
+servarr_data_dir: "/var/lib/{{ servarr_app }}"
+servarr_install_dir: "/opt/{{ servarr_app | capitalize }}"
+
+# Sonarr/Radarr are on API v3; Lidarr/Prowlarr are still v1. Overridden per host.
+servarr_api_version: "v3"
+
+# Always talk to the app over loopback — the API key never leaves the container.
+servarr_api_host: "127.0.0.1"
+
+# How long to wait for the app to come back after a built-in update. The updater
+# extracts a new tree and restarts the service; on these 1–2 core LXCs that
+# lands well inside 5 minutes, but Lidarr/Radarr do a DB migration on first boot.
+servarr_update_wait_retries: 40
+servarr_update_wait_delay: 15

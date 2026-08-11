@@ -1,26 +1,18 @@
-# Configure the media hosts to match their running state (idempotent capture).
-# This session scopes the FIRST idempotent pass to prowlarr (109) — the lowest-
-# risk host. Run with --check FIRST to prove a clean no-op before any real run:
+# Converge the media hosts to their captured configuration state.
 #
 #   cd ansible
-#   ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory/hosts.yml \
-#     playbooks/configure-media.yml --limit prowlarr --check
+#   ansible-playbook -i inventory/hosts.yml playbooks/configure-media.yml --check
 #
-# As each app's role is captured, add its block below and widen the --limit.
+# This is the original brownfield-capture entry point, kept because the README
+# and PET-46/47 reference it. It now runs the same shared play body as
+# check-updates.yml (`media_update_apply: false`) — the roles converge config
+# AND report versions in one pass, so the two are deliberately equivalent.
+# Use check-updates.yml when what you want is the version report; use
+# update-media.yml to actually upgrade.
+#
+# The per-app roles (servarr / plex / seerr / qbittorrent-vpn) replaced the
+# single-host `prowlarr` role that scoped the first idempotent pass.
 ---
-- name: Media base (all media hosts)
-  hosts: media
-  gather_facts: true
-  roles:
-    - media-base
-
-- name: Prowlarr
-  hosts: prowlarr
-  gather_facts: false
-  roles:
-    - prowlarr
-
-# TODO (follow-up, PET-47): sonarr / radarr / lidarr / plex / seerr /
-# qbittorrent-vpn roles. qbittorrent-vpn's Gluetun/Proton secrets come from
-# Vault (kv/services/media/qbittorrent) read by a media-scoped policy — never
-# committed. See docs/GOTCHAS.md.
+- ansible.builtin.import_playbook: media-roles.yml
+  vars:
+    media_update_apply: false

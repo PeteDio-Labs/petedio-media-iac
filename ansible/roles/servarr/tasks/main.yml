@@ -1,0 +1,133 @@
+# servarr — one role for the four *arr apps (sonarr/radarr/lidarr/prowlarr).
+#
+# They share an install shape (community-script tarball at /opt/<App>, data at
+# /var/lib/<app>, a systemd unit) and, crucially, an update contract: each
+# reports `packageUpdateMechanism: builtIn`, meaning the app ships its own
+# updater. We drive THAT rather than hand-rolling tarball extraction — it is the
+# vendor-supported path, it handles the binary swap + service restart itself,
+# and it cannot get out of step with the app's own migration logic.
+#
+# CAPTURE-IN-PLACE: the install is owned by the community-script installer; this
+# role asserts the service contract and manages *updates*. It never re-provisions.
+#
+# Read-only tasks carry `check_mode: false` so `--check` still produces a real
+# version report instead of skipping the queries and reporting nothing.
+---
+- name: "{{ servarr_app }} — service enabled and running"
+  ansible.builtin.systemd_service:
+    name: "{{ servarr_service }}"
+    enabled: true
+    state: started
+
+# ---------------------------------------------------------------- discovery --
+# The API key and port are whatever the running app decided; read them rather
+# than pinning them in inventory, so a port change on the host can't desync us.
+- name: "{{ servarr_app }} — read config.xml"
+  ansible.builtin.slurp:
+    src: "{{ servarr_data_dir }}/config.xml"
+  register: servarr_config_raw
+  check_mode: false
+  no_log: true
+
+- name: "{{ servarr_app }} — extract API key and port"
+  ansible.builtin.set_fact:
+    servarr_api_key: >-
+      {{ (servarr_config_raw.content | b64decode
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | first) }}
+    servarr_port: >-
+      {{ (servarr_config_raw.content | b64decode
+          | regex_search('<Port>([^<]+)</Port>', '\1') | first) }}
+  no_log: true
+
+# ------------------------------------------------------------ version state --
+# /api/<v>/update returns the release feed newest-first, each entry flagged
+# installed / installable / latest. `installable: true` is the app's own verdict
+# that it can move to that build — a better gate than comparing version strings.
+- name: "{{ servarr_app }} — query update feed"
+  ansible.builtin.uri:
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/update"
+    headers:
+      X-Api-Key: "{{ servarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: servarr_update_feed
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "{{ servarr_app }} — resolve current and target versions"
+  ansible.builtin.set_fact:
+    servarr_current: >-
+      {{ servarr_update_feed.json | selectattr('installed', 'equalto', true)
+         | map(attribute='version') | first | default('unknown') }}
+    servarr_target: >-
+      {{ servarr_update_feed.json | selectattr('installable', 'equalto', true)
+         | map(attribute='version') | first | default('') }}
+
+- name: "{{ servarr_app }} — record update report"
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: "{{ servarr_app }}"
+      mechanism: "servarr-builtin"
+      current: "{{ servarr_current }}"
+      available: "{{ servarr_target | default('', true) }}"
+      update_available: "{{ (servarr_target | default('', true) | length) > 0 }}"
+
+# ------------------------------------------------------------------ upgrade --
+- name: "{{ servarr_app }} — apply update"
+  when:
+    - media_update_apply | bool
+    - (servarr_target | default('', true) | length) > 0
+  block:
+    - name: "{{ servarr_app }} — trigger built-in ApplicationUpdate"
+      ansible.builtin.uri:
+        url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/command"
+        method: POST
+        headers:
+          X-Api-Key: "{{ servarr_api_key }}"
+        body_format: json
+        body:
+          name: ApplicationUpdate
+        status_code: [200, 201]
+        timeout: 30
+      register: servarr_update_cmd
+      changed_when: true
+      no_log: true
+
+    # The service goes down mid-swap, so tolerate connection failures while we
+    # poll. Success is strictly "answers again AND reports the target version" —
+    # a 200 on the OLD version means the update silently failed, not that we're
+    # done, which is exactly the failure this gate exists to catch.
+    - name: "{{ servarr_app }} — wait for return on {{ servarr_target }}"
+      ansible.builtin.uri:
+        url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/system/status"
+        headers:
+          X-Api-Key: "{{ servarr_api_key }}"
+        timeout: 15
+      register: servarr_post_update
+      until:
+        - servarr_post_update.status is defined
+        - servarr_post_update.status == 200
+        - servarr_post_update.json.version | default('') == servarr_target
+      retries: "{{ servarr_update_wait_retries }}"
+      delay: "{{ servarr_update_wait_delay }}"
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: "{{ servarr_app }} — fail if it did not land on {{ servarr_target }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ servarr_app }} did not reach {{ servarr_target }} within
+          {{ servarr_update_wait_retries * servarr_update_wait_delay }}s
+          (last seen: {{ servarr_post_update.json.version | default('unreachable') }}).
+          The old tree is still in place — check `journalctl -u {{ servarr_service }}`.
+      when: servarr_post_update.json.version | default('') != servarr_target
+
+    - name: "{{ servarr_app }} — record post-update version"
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({
+          'current': servarr_target,
+          'available': '',
+          'update_available': false,
+          'updated': true }) }}"

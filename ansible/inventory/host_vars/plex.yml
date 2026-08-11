@@ -1,0 +1,12 @@
+# plex 103/.140 (also 192.168.86.140 on the mesh).
+#
+# Two Plex apt sources were configured on this host. `plexmediaserver.sources`
+# (repo.plex.tv) is the current one and stays. `plex.list` (downloads.plex.tv)
+# is a legacy leftover pinned to the 1.42.2 line — dead weight today because apt
+# takes the highest version, but a real downgrade risk the moment the current
+# repo is unreachable or something pins to it. Removed here.
+---
+media_timezone: "Etc/UTC"
+
+media_base_stale_apt_sources:
+  - plex.list

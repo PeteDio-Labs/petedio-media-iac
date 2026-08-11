@@ -1,0 +1,19 @@
+# qbittorrent-vpn 110 — gluetun (ProtonVPN WireGuard) + qbittorrent + a
+# port-sync sidecar, as a docker compose stack.
+---
+qbit_dir: /opt/qbittorrent-vpn
+qbit_compose_file: /opt/qbittorrent-vpn/docker-compose.yml
+qbit_env_file: /opt/qbittorrent-vpn/.env
+qbit_api: "http://localhost:8080"
+qbit_user: admin
+
+# All three services track floating tags (`:latest`, `alpine:3.20`), so "is
+# there an update" is a digest question, not a version-string question: compare
+# the local RepoDigest against the registry's current manifest digest.
+qbit_health_retries: 30
+qbit_health_delay: 10
+
+# Pulling restarts the containers. qBittorrent resumes its torrents on restart,
+# so this is a courtesy rather than a data-safety gate — but interrupting an
+# active download is still rude. Override with -e qbit_update_force=true.
+qbit_update_force: false

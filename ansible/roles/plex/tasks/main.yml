@@ -1,0 +1,133 @@
+# plex — Plex Media Server on LXC 103, installed as an apt package.
+#
+# Unlike the *arr apps, Plex has no in-app updater on Linux server builds (that
+# is a Plex Pass desktop feature), so apt IS the update mechanism.
+#
+# Stale-source note: this host carried TWO Plex apt sources —
+#   plexmediaserver.sources -> repo.plex.tv/deb      (current, serves 1.43.x)
+#   plex.list               -> downloads.plex.tv/deb (legacy, stuck on 1.42.2)
+# Both resolve, and apt picks the highest version, so it was harmless *today* —
+# but it is a live footgun: if the legacy repo ever outranks the current one
+# (pin, or the current repo 404s) apt would happily "upgrade" Plex backwards.
+# The removal is declared in host_vars/plex.yml via media_base_stale_apt_sources
+# so the mechanism is reusable rather than special-cased here.
+---
+- name: Plex — service enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ plex_service }}"
+    enabled: true
+    state: started
+
+# ------------------------------------------------------------ version state --
+- name: Plex — refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  changed_when: false
+  check_mode: false
+
+- name: Plex — read apt policy for {{ plex_package }}
+  ansible.builtin.command: "apt-cache policy {{ plex_package }}"
+  register: plex_apt_policy
+  changed_when: false
+  check_mode: false
+
+- name: Plex — resolve installed and candidate versions
+  ansible.builtin.set_fact:
+    plex_current: >-
+      {{ plex_apt_policy.stdout | regex_search('Installed:\s*(\S+)', '\1') | first | default('none') }}
+    plex_candidate: >-
+      {{ plex_apt_policy.stdout | regex_search('Candidate:\s*(\S+)', '\1') | first | default('none') }}
+
+- name: Plex — record update report
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: plex
+      mechanism: apt
+      current: "{{ plex_current }}"
+      available: "{{ plex_candidate if plex_candidate != plex_current else '' }}"
+      update_available: "{{ plex_candidate != plex_current and plex_candidate != 'none' }}"
+
+# ------------------------------------------------------------------ upgrade --
+- name: Plex — apply update
+  when:
+    - media_update_apply | bool
+    - plex_candidate != plex_current
+    - plex_candidate != 'none'
+  block:
+    # Upgrading restarts the server and kills any in-flight transcode, so check
+    # for viewers first. The token lives in Preferences.xml; keep it out of logs
+    # and out of the URL (query strings land in access logs) by sending it as a
+    # header.
+    - name: Plex — read PlexOnlineToken
+      ansible.builtin.slurp:
+        src: "{{ plex_prefs_path }}"
+      register: plex_prefs_raw
+      check_mode: false
+      no_log: true
+
+    - name: Plex — extract token
+      ansible.builtin.set_fact:
+        plex_token: >-
+          {{ (plex_prefs_raw.content | b64decode
+              | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
+      no_log: true
+
+    - name: Plex — count active playback sessions
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_port }}/status/sessions"
+        headers:
+          X-Plex-Token: "{{ plex_token }}"
+        return_content: true
+        timeout: 15
+      register: plex_sessions
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Plex — resolve active session count
+      ansible.builtin.set_fact:
+        plex_active_sessions: >-
+          {{ plex_sessions.content | regex_search('size="(\d+)"', '\1') | first | default('0') | int }}
+
+    - name: Plex — skip update, someone is watching
+      ansible.builtin.debug:
+        msg: >-
+          SKIPPED: {{ plex_active_sessions }} active playback session(s).
+          Re-run with -e plex_update_force=true to update anyway.
+      when:
+        - plex_active_sessions | int > 0
+        - not (plex_update_force | bool)
+
+    - name: Plex — upgrade {{ plex_package }} to {{ plex_candidate }}
+      ansible.builtin.apt:
+        name: "{{ plex_package }}"
+        state: latest
+        only_upgrade: true
+        update_cache: false
+      when: plex_active_sessions | int == 0 or (plex_update_force | bool)
+      register: plex_upgraded
+
+    - name: Plex — verify the server answers on the new build
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_port }}/identity"
+        return_content: true
+        timeout: 15
+      register: plex_identity
+      until:
+        - plex_identity.status is defined
+        - plex_identity.status == 200
+        - plex_candidate.split('-')[0] in (plex_identity.content | default(''))
+      retries: 20
+      delay: 6
+      changed_when: false
+      when: plex_upgraded.changed | default(false)
+
+    - name: Plex — record post-update version
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({
+          'current': plex_candidate,
+          'available': '',
+          'update_available': false,
+          'updated': true }) }}"
+      when: plex_upgraded.changed | default(false)

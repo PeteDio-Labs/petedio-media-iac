@@ -1,0 +1,6 @@
+# qbittorrent-vpn 110/.21 — Gluetun (ProtonVPN) + qBittorrent + port-sync.
+---
+# The LXC itself is UTC. Note the *containers* run America/Los_Angeles via TZ in
+# docker-compose.yml — a third timezone in this stack. Left as-is; it is the
+# container's display setting, not the host's.
+media_timezone: "Etc/UTC"

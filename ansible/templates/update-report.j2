@@ -1,0 +1,38 @@
+{% set rows = [] %}
+{% for h in groups['media'] | sort %}
+{%   if hostvars[h].media_update_report is defined %}
+{%     set _ = rows.append(hostvars[h].media_update_report) %}
+{%   endif %}
+{% endfor %}
+{% set pending = rows | selectattr('update_available', 'equalto', true) | list %}
+{% set applied = rows | selectattr('updated', 'defined') | selectattr('updated', 'equalto', true) | list %}
+{% set fmt = '%-18s %-24s %-26s %s' %}
+════════════════════════════════════════════════════════════════════════════════
+ MEDIA STACK — {{ 'UPDATE RUN' if media_update_apply | bool else 'UPDATE CHECK' }}
+════════════════════════════════════════════════════════════════════════════════
+{{ fmt | format('SERVICE', 'CURRENT', 'AVAILABLE', 'MECHANISM') }}
+{{ '-' * 80 }}
+{% for r in rows %}
+{{ fmt | format(
+     r.service,
+     r.current | string | truncate(23, true, ''),
+     (r.available if r.available else '—') | string | truncate(25, true, '…'),
+     r.mechanism) }}
+{% endfor %}
+{{ '-' * 80 }}
+{% if media_update_apply | bool %}
+ Applied: {{ applied | length }}{% if applied %} — {{ applied | map(attribute='service') | join(', ') }}{% endif %}
+
+ Pending: {{ pending | length }}{% if pending %} — {{ pending | map(attribute='service') | join(', ') }}{% endif %}
+
+{% else %}
+ Updates available: {{ pending | length }}{% if pending %} — {{ pending | map(attribute='service') | join(', ') }}{% endif %}
+
+{% if pending %}
+ Apply with:  ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml
+{% endif %}
+{% endif %}
+{% for r in rows if r.note is defined and r.note %}
+ NOTE {{ r.service }}: {{ r.note }}
+{% endfor %}
+════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,30 @@
+# seerr 101 — request manager (github.com/seerr-team/seerr), Node 22 + pnpm,
+# built from source into /opt/seerr and run by the `seerr` systemd unit.
+---
+seerr_service: seerr
+seerr_dir: /opt/seerr
+seerr_config_dir: /opt/seerr/config
+seerr_port: 5055
+seerr_repo: seerr-team/seerr
+
+# seerr publishes NO prebuilt release assets — the only upgrade path is
+# "fetch the source tag, pnpm install, pnpm build". That is the single riskiest
+# operation in this stack: it is the only update that can fail *halfway* and
+# leave the service down, and it runs on a 12G disk. So it is opt-in.
+#
+#   check  — always runs, costs nothing, reports current vs latest
+#   update — only when BOTH media_update_apply AND seerr_update_enabled are true
+#
+# Flip this on in host_vars (or -e seerr_update_enabled=true) when you can watch
+# it. Do not enable it for an unattended cron run.
+seerr_update_enabled: false
+
+# Refuse to start an upgrade without room for the build. node_modules + a Next
+# build tree needs headroom well beyond the source drop.
+seerr_min_free_mb: 3072
+
+# Build can be slow on 4 cores — Next.js production build of this app is the
+# long pole.
+seerr_build_timeout: 1800
+seerr_start_wait_retries: 30
+seerr_start_wait_delay: 10

@@ -1,0 +1,4 @@
+# lidarr 100/.14 — music. Still on the v1 API (Lidarr never moved to v3).
+---
+servarr_api_version: "v1"
+media_timezone: "America/Chicago"

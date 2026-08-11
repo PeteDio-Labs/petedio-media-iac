@@ -1,0 +1,218 @@
+# qbittorrent-vpn — the compose stack on LXC 110.
+#
+# PROVENANCE NOTE: the compose file's header claims "Managed by Ansible — Source:
+# infrastructure/ansible/templates/qbittorrent-vpn/docker-compose.yml.j2" and
+# refers to "LXC 120". Neither is true any more: that template lived in the
+# retired homelab-infra repo (it is in no current clone) and the container is
+# 110. So the file on disk is, in practice, unmanaged. This role captures the
+# stack's *runtime* contract (services up, images current) without rewriting the
+# compose file — templating it here would mean pulling the Proton WireGuard key
+# and the qBit WebUI password into this repo's Vault scope first, which is its
+# own piece of work. Tracked as follow-up; see README.
+#
+# Secrets: the WebUI password is read from the host's .env at runtime and never
+# leaves the container or lands in a log. .env itself is NOT committed.
+---
+- name: qbit — compose file present
+  ansible.builtin.stat:
+    path: "{{ qbit_compose_file }}"
+  register: qbit_compose_stat
+  check_mode: false
+
+- name: qbit — fail if the compose file is missing
+  ansible.builtin.assert:
+    that: qbit_compose_stat.stat.exists
+    fail_msg: "{{ qbit_compose_file }} not found — the stack is not deployed as expected."
+
+- name: qbit — stack is up
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbit_dir }}"
+    state: present
+
+# ------------------------------------------------------------ version state --
+# `docker compose config --images` is the source of truth for what this stack
+# runs — no hardcoded image list to drift.
+- name: qbit — compare local image digests against the registry
+  ansible.builtin.script:
+    cmd: "image-digests.sh {{ qbit_dir }}"
+  register: qbit_digests
+  changed_when: false
+  check_mode: false
+
+# Jinja has no "compare element 1 to element 2 of the same row" filter, so the
+# comparison is done as a loop condition rather than a filter chain.
+- name: qbit — list images whose local digest differs from the registry
+  ansible.builtin.set_fact:
+    qbit_outdated_images: "{{ qbit_outdated_images | default([]) + [row[0]] }}"
+  loop: "{{ qbit_digests.stdout_lines | map('split', ' ') | list }}"
+  loop_control:
+    loop_var: row
+    label: "{{ row[0] }}"
+  when:
+    - row | length == 3
+    - row[1] != 'none'
+    - row[2] != 'unknown'
+    - row[1] != row[2]
+
+# An image whose remote digest could not be resolved is NOT "up to date" — it is
+# unknown. Docker Hub rate-limits anonymous manifest requests (HTTP 429), and
+# without this distinction a rate-limited run reports a clean stack when it has
+# in fact checked nothing.
+- name: qbit — list images whose remote digest could not be resolved
+  ansible.builtin.set_fact:
+    qbit_unchecked_images: "{{ qbit_unchecked_images | default([]) + [row[0]] }}"
+  loop: "{{ qbit_digests.stdout_lines | map('split', ' ') | list }}"
+  loop_control:
+    loop_var: row
+    label: "{{ row[0] }}"
+  when:
+    - row | length == 3
+    - row[2] == 'unknown'
+
+# The table stays readable by reporting a count; the image names go in `note`,
+# which the report prints in full underneath.
+- name: qbit — record update report
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: qbittorrent-vpn
+      mechanism: docker-compose
+      current: "{{ qbit_digests.stdout_lines | length }} images"
+      available: >-
+        {{ (qbit_outdated_images | default([]) | length ~ ' behind')
+           if (qbit_outdated_images | default([]) | length) > 0 else '' }}
+      update_available: "{{ (qbit_outdated_images | default([]) | length) > 0 }}"
+      note: >-
+        {{ (('behind: ' ~ (qbit_outdated_images | default([]) | join(', ')))
+            if (qbit_outdated_images | default([]) | length) > 0 else '')
+        }}{{ (' | NOT CHECKED (registry unreachable / Docker Hub 429): '
+              ~ (qbit_unchecked_images | default([]) | join(', ')))
+             if (qbit_unchecked_images | default([]) | length) > 0 else '' }}
+
+# ------------------------------------------------------------------ upgrade --
+- name: qbit — apply update
+  when:
+    - media_update_apply | bool
+    - (qbit_outdated_images | default([]) | length) > 0
+  block:
+    - name: qbit — read WebUI password from .env
+      ansible.builtin.slurp:
+        src: "{{ qbit_env_file }}"
+      register: qbit_env_raw
+      check_mode: false
+      no_log: true
+
+    - name: qbit — extract WebUI password
+      ansible.builtin.set_fact:
+        qbit_password: >-
+          {{ (qbit_env_raw.content | b64decode
+              | regex_search('QBIT_WEBUI_PASSWORD=(.*)', '\1') | first | default('') | trim) }}
+      no_log: true
+
+    - name: qbit — authenticate to the WebUI
+      ansible.builtin.uri:
+        url: "{{ qbit_api }}/api/v2/auth/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ qbit_user }}"
+          password: "{{ qbit_password }}"
+        headers:
+          Referer: "{{ qbit_api }}"
+        return_content: true
+        timeout: 15
+      register: qbit_login
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: qbit — count active transfers
+      ansible.builtin.uri:
+        url: "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
+        headers:
+          Cookie: "{{ qbit_login.set_cookie | default('') }}"
+          Referer: "{{ qbit_api }}"
+        return_content: true
+        timeout: 15
+      register: qbit_active
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: qbit — resolve active download count
+      ansible.builtin.set_fact:
+        qbit_active_count: "{{ (qbit_active.json | default([]) | length) if (qbit_active.status | default(0)) == 200 else -1 }}"
+
+    - name: qbit — skip update, downloads in flight
+      ansible.builtin.debug:
+        msg: >-
+          SKIPPED: {{ qbit_active_count }} torrent(s) downloading.
+          Re-run with -e qbit_update_force=true to update anyway.
+      when:
+        - qbit_active_count | int > 0
+        - not (qbit_update_force | bool)
+
+    # Two of the three images come from docker.io, which rate-limits anonymous
+    # pulls (100/6h per IP). A 429 mid-pull makes compose abort BEFORE it
+    # recreates anything — the running stack is left untouched — so this is a
+    # safe failure, but it must be reported as "could not update", never
+    # swallowed. Retries cover a transient blip; a real rate-limit needs the
+    # Nexus pull-through cache (see README follow-up).
+    - name: qbit — pull and recreate the stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbit_dir }}"
+        pull: always
+        state: present
+        recreate: auto
+      when: qbit_active_count | int <= 0 or (qbit_update_force | bool)
+      register: qbit_recreated
+      until: qbit_recreated is succeeded
+      retries: 2
+      delay: 30
+      failed_when: false
+
+    - name: qbit — report a pull that could not complete
+      ansible.builtin.fail:
+        msg: >-
+          qBittorrent stack update could not complete — the image pull failed
+          and the stack was left running its current images (verified healthy).
+          {{ 'Docker Hub returned 429 (anonymous pull rate limit).'
+             if '429' in (qbit_recreated.msg | default('') | string)
+             else (qbit_recreated.msg | default('') | string | truncate(300, true, '…')) }}
+          Fix: point docker.io at the homelab Nexus pull-through cache, or retry
+          once the limit window resets.
+      when:
+        - qbit_recreated is defined
+        - qbit_recreated is failed or (qbit_recreated.msg | default('') is search('Error'))
+
+    # gluetun must come back healthy or qBittorrent has no network at all — it
+    # shares gluetun's namespace. An unhealthy gluetun is a hard failure, not a
+    # warning.
+    - name: qbit — wait for gluetun and qbittorrent to report healthy
+      ansible.builtin.command:
+        cmd: docker inspect --format={{ '{{' }}.State.Health.Status{{ '}}' }} {{ item }}
+      register: qbit_health
+      until: qbit_health.stdout | trim == 'healthy'
+      retries: "{{ qbit_health_retries }}"
+      delay: "{{ qbit_health_delay }}"
+      changed_when: false
+      loop:
+        - gluetun
+        - qbittorrent
+      when: qbit_recreated.changed | default(false)
+
+    - name: qbit — confirm the VPN tunnel still holds a public IP
+      ansible.builtin.command:
+        cmd: docker exec gluetun wget -qO- -T 10 https://ipinfo.io/ip
+      register: qbit_vpn_ip
+      changed_when: false
+      failed_when: qbit_vpn_ip.rc != 0 or (qbit_vpn_ip.stdout | trim | length) == 0
+      when: qbit_recreated.changed | default(false)
+
+    - name: qbit — record post-update state
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({
+          'available': '',
+          'update_available': false,
+          'updated': true,
+          'note': 'VPN egress ' ~ (qbit_vpn_ip.stdout | default('?') | trim) }) }}"
+      when: qbit_recreated.changed | default(false)

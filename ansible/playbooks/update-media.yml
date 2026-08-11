@@ -1,0 +1,33 @@
+# Apply available updates across the media stack.
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml
+#
+# Same roles as check-updates.yml, with `media_update_apply: true`. Each service
+# updates by its own vendor-supported path (Servarr's built-in updater, apt for
+# Plex, compose pull for qBittorrent) and every one of them verifies that the
+# service came back on the NEW version before the play is allowed to succeed.
+#
+# Built-in guards — each is skip-not-fail, and each has a force override:
+#   plex   skips while someone is watching     -e plex_update_force=true
+#   qbit   skips while torrents are downloading -e qbit_update_force=true
+#   seerr  skipped entirely unless opted in     -e seerr_update_enabled=true
+#          (it is the only build-from-source upgrade; see roles/seerr/defaults)
+#
+# Dry-run the whole thing first:
+#   ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --check
+---
+- name: Media stack — apply updates
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Report mode
+      ansible.builtin.debug:
+        msg: >-
+          APPLY mode. Services will be restarted as they update.
+          Plex/qBittorrent skip themselves if in use; seerr needs
+          -e seerr_update_enabled=true.
+
+- ansible.builtin.import_playbook: media-roles.yml
+  vars:
+    media_update_apply: true

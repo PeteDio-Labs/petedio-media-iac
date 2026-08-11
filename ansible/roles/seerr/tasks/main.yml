@@ -1,0 +1,288 @@
+# seerr — request manager on LXC 101.
+#
+# Version truth is package.json, NOT /root/.seerr: that marker still reads 3.1.0
+# while the app is on 3.3.0, because the community-script installer wrote it once
+# and the later hand-upgrade never touched it. Trusting the marker would report a
+# two-release-stale version forever.
+---
+- name: seerr — service enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ seerr_service }}"
+    enabled: true
+    state: started
+
+# ------------------------------------------------------------ version state --
+- name: seerr — read installed package.json
+  ansible.builtin.slurp:
+    src: "{{ seerr_dir }}/package.json"
+  register: seerr_pkg_raw
+  check_mode: false
+
+- name: seerr — resolve installed version
+  ansible.builtin.set_fact:
+    seerr_current: "{{ (seerr_pkg_raw.content | b64decode | from_json).version | default('unknown') }}"
+
+# Queried from the control node (the LXC has egress, but there is no reason to
+# make the container talk to GitHub just to answer a version question).
+- name: seerr — query latest release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ seerr_repo }}/releases/latest"
+    return_content: true
+    timeout: 30
+  register: seerr_release
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: seerr — resolve latest version
+  ansible.builtin.set_fact:
+    seerr_latest: "{{ seerr_release.json.tag_name | default('') | regex_replace('^v', '') }}"
+
+- name: seerr — record update report
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: seerr
+      mechanism: "github-source-build"
+      current: "{{ seerr_current }}"
+      available: "{{ seerr_latest if seerr_latest != seerr_current else '' }}"
+      update_available: "{{ seerr_latest != seerr_current and (seerr_latest | length) > 0 }}"
+      note: >-
+        {{ 'build-from-source; set seerr_update_enabled=true to apply'
+           if (seerr_latest != seerr_current and not (seerr_update_enabled | bool))
+           else '' }}
+
+# ------------------------------------------------------------------ upgrade --
+# Strategy: build a NEW tree beside the old one and swap by rename, rather than
+# mutating the live tree in place. Renames on one filesystem are atomic and free,
+# so the previous install stays intact and complete until the new one is proven —
+# which turns "the build died halfway" from an outage into a one-line rollback.
+# config/ and node_modules/ are MOVED (not copied) into the new tree: config is
+# the only irreplaceable state, and reusing node_modules saves a full cold
+# install (pnpm reconciles it against the new lockfile anyway).
+- name: seerr — apply update
+  when:
+    - media_update_apply | bool
+    - seerr_update_enabled | bool
+    - seerr_latest != seerr_current
+    - (seerr_latest | length) > 0
+  vars:
+    seerr_new: "/opt/seerr-{{ seerr_latest }}"
+    seerr_old: "/opt/seerr.old-{{ seerr_current }}"
+  block:
+    - name: seerr — gather mount facts for the space check
+      ansible.builtin.setup:
+        filter: ansible_mounts
+      check_mode: false
+
+    - name: seerr — require {{ seerr_min_free_mb }}MB free
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available')
+             | first | default(0)) > (seerr_min_free_mb | int * 1048576)
+        fail_msg: >-
+          Not enough free space on / to build seerr
+          ({{ ((ansible_mounts | selectattr('mount','equalto','/') | map(attribute='size_available')
+                | first | default(0)) / 1048576) | round | int }}MB free,
+          need {{ seerr_min_free_mb }}MB). /root/seerr-*-backup.tgz is usually
+          the thing worth deleting.
+
+    # Belt and braces on top of the swap: config is small (a few MB) and is the
+    # only thing a rollback cannot reconstruct.
+    - name: seerr — back up config
+      community.general.archive:
+        path: "{{ seerr_config_dir }}"
+        dest: "/root/seerr-config-{{ seerr_current }}-pre-{{ seerr_latest }}.tgz"
+        format: gz
+        force_archive: true
+
+    - name: seerr — fetch and extract source for v{{ seerr_latest }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/{{ seerr_repo }}/archive/refs/tags/v{{ seerr_latest }}.tar.gz"
+        dest: /opt
+        remote_src: true
+        creates: "{{ seerr_new }}"
+
+    - name: seerr — stop the service for the swap
+      ansible.builtin.systemd_service:
+        name: "{{ seerr_service }}"
+        state: stopped
+
+    # The source tarball ships its OWN config/ directory (defaults committed to
+    # the repo, not runtime state). It must go before the live config is moved
+    # in: with it present, a `creates:`-guarded move silently no-ops, the real
+    # database is left behind in the old tree, and seerr boots onto an empty db.
+    # That is exactly how this role destroyed the live database the first time
+    # it ran — hence the explicit removal, the `removes:` guard on the move
+    # (which asserts the SOURCE exists rather than that the target does not),
+    # and the database assertion below.
+    - name: seerr — remove the config directory shipped inside the source tarball
+      ansible.builtin.file:
+        path: "{{ seerr_new }}/config"
+        state: absent
+
+    - name: seerr — carry the LIVE config into the new tree
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_config_dir }} {{ seerr_new }}/config"
+        removes: "{{ seerr_config_dir }}"
+
+    - name: seerr — verify the live database came across
+      ansible.builtin.stat:
+        path: "{{ seerr_new }}/config/db/db.sqlite3"
+      register: seerr_db_moved
+
+    # A freshly initialised sqlite file is a single 4096-byte page. Anything at
+    # or below that is a new database, not the live one.
+    - name: seerr — refuse to continue without the live database
+      ansible.builtin.assert:
+        that:
+          - seerr_db_moved.stat.exists
+          - seerr_db_moved.stat.size > 8192
+        fail_msg: >-
+          The live seerr database is NOT in the new tree
+          ({{ 'missing entirely' if not seerr_db_moved.stat.exists
+              else (seerr_db_moved.stat.size ~ ' bytes — that is an empty db') }}).
+          Refusing to continue; the previous install is still intact at
+          {{ seerr_dir }} and config is backed up to
+          /root/seerr-config-{{ seerr_current }}-pre-{{ seerr_latest }}.tgz.
+
+    - name: seerr — carry node_modules into the new tree
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_dir }}/node_modules {{ seerr_new }}/node_modules"
+        creates: "{{ seerr_new }}/node_modules"
+        removes: "{{ seerr_dir }}/node_modules"
+
+    - name: seerr — move the old tree aside
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_dir }} {{ seerr_old }}"
+        creates: "{{ seerr_old }}"
+
+    - name: seerr — activate the new tree
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_new }} {{ seerr_dir }}"
+        creates: "{{ seerr_dir }}"
+
+    - name: seerr — install dependencies
+      ansible.builtin.command:
+        cmd: pnpm install --frozen-lockfile
+        chdir: "{{ seerr_dir }}"
+      environment:
+        NODE_ENV: development   # the build needs devDependencies
+      changed_when: true
+      timeout: "{{ seerr_build_timeout }}"
+
+    - name: seerr — build
+      ansible.builtin.command:
+        cmd: pnpm build
+        chdir: "{{ seerr_dir }}"
+      environment:
+        NODE_ENV: production
+      changed_when: true
+      timeout: "{{ seerr_build_timeout }}"
+
+    - name: seerr — start the service
+      ansible.builtin.systemd_service:
+        name: "{{ seerr_service }}"
+        state: started
+
+    - name: seerr — wait for it to answer on the new build
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_port }}/api/v1/status"
+        timeout: 15
+      register: seerr_status
+      until:
+        - seerr_status.status is defined
+        - seerr_status.status == 200
+      retries: "{{ seerr_start_wait_retries }}"
+      delay: "{{ seerr_start_wait_delay }}"
+      changed_when: false
+
+    # "Answers 200" is NOT proof of a good upgrade — seerr answers 200 perfectly
+    # happily on a brand-new empty database. Assert the real data is being
+    # served before the old tree is thrown away.
+    - name: seerr — count rows in the served database
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c "import sqlite3;print(sqlite3.connect('{{ seerr_dir }}/config/db/db.sqlite3')
+          .execute('select count(*) from media_request').fetchone()[0])"
+      register: seerr_row_count
+      changed_when: false
+
+    - name: seerr — refuse to discard the old tree unless real data is present
+      ansible.builtin.assert:
+        that:
+          - (seerr_row_count.stdout | trim | int) > 0
+        fail_msg: >-
+          seerr is serving a database with 0 requests — this looks like a fresh
+          install, not the upgraded one. NOT deleting the previous tree
+          ({{ seerr_old }}); restore config from
+          /root/seerr-config-{{ seerr_current }}-pre-{{ seerr_latest }}.tgz.
+        success_msg: >-
+          seerr is serving {{ seerr_row_count.stdout | trim }} media requests.
+
+    - name: seerr — drop the superseded tree
+      ansible.builtin.file:
+        path: "{{ seerr_old }}"
+        state: absent
+
+    - name: seerr — refresh the stale version marker
+      ansible.builtin.copy:
+        content: "{{ seerr_latest }}\n"
+        dest: /root/.seerr
+        mode: "0644"
+
+    - name: seerr — record post-update version
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({
+          'current': seerr_latest,
+          'available': '',
+          'update_available': false,
+          'updated': true,
+          'note': '' }) }}"
+
+  # ------------------------------------------------------------- rollback --
+  # Only meaningful if the swap already happened; `removes:` makes each step a
+  # no-op otherwise, so this is safe whether we failed at download or at build.
+  rescue:
+    - name: seerr — roll back — move the failed tree aside
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_dir }} /opt/seerr.failed-{{ seerr_latest }}"
+        removes: "{{ seerr_dir }}"
+      failed_when: false
+
+    - name: seerr — roll back — restore the previous tree
+      ansible.builtin.command:
+        cmd: "mv {{ seerr_old }} {{ seerr_dir }}"
+        removes: "{{ seerr_old }}"
+      failed_when: false
+
+    - name: seerr — roll back — restart on the previous version
+      ansible.builtin.systemd_service:
+        name: "{{ seerr_service }}"
+        state: started
+      failed_when: false
+
+    - name: seerr — confirm the rollback is serving
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_port }}/api/v1/status"
+        timeout: 15
+      register: seerr_rollback_status
+      until:
+        - seerr_rollback_status.status is defined
+        - seerr_rollback_status.status == 200
+      retries: 12
+      delay: 10
+      changed_when: false
+      failed_when: false
+
+    - name: seerr — report the failure
+      ansible.builtin.fail:
+        msg: >-
+          seerr upgrade {{ seerr_current }} -> {{ seerr_latest }} FAILED and was
+          rolled back to {{ seerr_current }}
+          ({{ 'now serving 200' if (seerr_rollback_status.status | default(0)) == 200
+              else 'STILL NOT SERVING — needs hands' }}).
+          Failed tree kept at /opt/seerr.failed-{{ seerr_latest }};
+          config backup at
+          /root/seerr-config-{{ seerr_current }}-pre-{{ seerr_latest }}.tgz.

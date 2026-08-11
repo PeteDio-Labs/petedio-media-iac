@@ -1,0 +1,9 @@
+# prowlarr 109/.20 — indexers. v1 API. Runs as the dedicated `prowlarr` user
+# (the other three run as root/uid-1001), which the built-in updater handles —
+# /opt/Prowlarr is owned prowlarr:prowlarr so it can swap its own tree.
+---
+servarr_api_version: "v1"
+
+# Genuinely UTC — unlike its three siblings. The mixed timezones across this
+# stack are organic (different installers, different days), not a decision.
+media_timezone: "Etc/UTC"

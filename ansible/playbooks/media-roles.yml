@@ -1,0 +1,49 @@
+# Shared play body for the media stack. Both check-updates.yml and
+# update-media.yml import this and differ ONLY in `media_update_apply` — so the
+# thing you dry-run is byte-for-byte the thing that then applies.
+#
+# Every role ends by setting a `media_update_report` fact with a common shape:
+#   { service, mechanism, current, available, update_available, [updated, note] }
+# The report play at the bottom is the only consumer, so adding a new service is
+# "write a role that sets that fact" and nothing else changes.
+---
+- name: Media base (all media hosts)
+  hosts: media
+  gather_facts: true
+  roles:
+    - media-base
+
+- name: Servarr apps (sonarr / radarr / lidarr / prowlarr)
+  hosts: servarr
+  gather_facts: false
+  roles:
+    - servarr
+
+- name: Plex
+  hosts: plex
+  gather_facts: false
+  roles:
+    - plex
+
+- name: Seerr
+  hosts: seerr
+  gather_facts: false
+  roles:
+    - seerr
+
+- name: qBittorrent + Gluetun stack
+  hosts: qbittorrent-vpn
+  gather_facts: false
+  roles:
+    - qbittorrent-vpn
+
+- name: Update report
+  hosts: media
+  gather_facts: false
+  tasks:
+    - name: Render the media stack update report
+      run_once: true
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "{{ lookup('template', '../templates/update-report.j2').split('\n') }}"

@@ -1,5 +1,28 @@
 ---
-media_timezone: "Etc/UTC"
+# Timezone is CAPTURED PER HOST in host_vars/, not assumed here.
+#
+# This used to default to "Etc/UTC" with the comment "matches the running media
+# hosts". It did not: plex/prowlarr/qbittorrent-vpn are UTC, but lidarr, sonarr,
+# radarr and seerr run America/Chicago. The role had only ever been run with
+# `--limit prowlarr`, so the wrong assumption stayed invisible until the role
+# was first applied stack-wide — at which point it silently repointed
+# /etc/localtime on four hosts. Classic capture-in-place violation: the role
+# asserted an assumed baseline instead of the real one.
+#
+# Empty means "do not manage the timezone on this host", so a host added to the
+# inventory without an explicit value can never be silently converted.
+media_timezone: ""
+
 media_base_packages:
   - curl
   - ca-certificates
+
+# Filenames under /etc/apt/sources.list.d/ to remove. Kept generic (rather than
+# special-cased in an app role) because "a legacy repo left behind by an older
+# installer" is the normal failure mode on these community-script containers,
+# not a Plex quirk. Set per host in host_vars/. Empty = nothing to clean.
+media_base_stale_apt_sources: []
+
+# Master switch consumed by every media role. `check-updates.yml` leaves it
+# false (report only); `update-media.yml` sets it true.
+media_update_apply: false
