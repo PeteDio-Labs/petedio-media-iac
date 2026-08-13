@@ -47,30 +47,36 @@ If a real WebUI password is ever wanted, that is a **deliberate config change** 
 qBittorrent (set `WebUI\Password_PBKDF2`), and only then is there something worth
 storing. Removing the dead key from `.env` is worth doing at the same time.
 
-## ⚠ Path collision — decide before seeding
+## Path collision — RESOLVED 2026-08-13 (read against live Vault)
 
-Two paths exist for the same thing, and this is precisely the "which is it called?"
-tax that `pet-secrets` was written to remove:
+Two paths existed for the same thing. Both were inspected once Vault was unsealed:
 
-| Path | State | Referenced by |
+| Path | Actually contains | Consumers |
 |---|---|---|
-| `kv/services/qbittorrent` | **seeded** (`username`, `password`) | `iac/scripts/vault-seed.sh`, `vault-verify.sh` |
-| `kv/services/media/qbittorrent` | **not seeded** | this repo's docs only — 0 code consumers |
+| `kv/services/qbittorrent` | `username`, `password` — **and nothing else** | `iac/scripts/vault-seed.sh`, `vault-verify.sh` |
+| `kv/services/media/qbittorrent` | **empty** | none |
 
-`iac`'s seed migrated the values out of the retired homelab-infra
-`qbittorrent.vault.yml` — *the same source this runbook was going to migrate from*.
-So the work was already done once, under a different name, and both copies inherit
-the phantom password.
+That settles it, and the answer is better than "pick one":
 
-**Recommendation:** consolidate on **`kv/services/media/qbittorrent`** — it matches
-the `services/media/*` grouping this repo already uses, keeps media secrets together,
-and is the path the `ansible` policy check below was verified against. Then drop the
-qBittorrent block from `iac/scripts/vault-seed.sh` so one script does not keep
-re-creating the other name.
+- **The seeded path holds only the phantom pair.** `username` + `password` are the
+  values `iac`'s seed migrated out of the retired homelab-infra
+  `qbittorrent.vault.yml` — the credential that matches nothing, because qBittorrent
+  has no WebUI password configured. There is no Proton key there. So
+  `kv/services/qbittorrent` contains **no secret worth keeping.**
+- **The Proton WireGuard key is not in Vault at all.** It exists only in
+  `/opt/qbittorrent-vpn/.env` on 110. The "seed pending" state was therefore real —
+  it was just pending for a different secret than this runbook named.
 
-Confirm what `kv/services/qbittorrent` actually holds before deciding — it may carry
-a Proton key worth keeping, or only the dead password. `pet-secrets get qbittorrent`
-will show both candidates.
+**Actions:**
+
+1. Seed `kv/services/media/qbittorrent` with the Proton key + addresses (below).
+   Source them from the live `.env` on 110; that is currently the only copy, which
+   is its own reason to get this done.
+2. Delete `kv/services/qbittorrent` — it holds only the dead credential.
+3. Drop the qBittorrent block from `iac/scripts/vault-seed.sh` (and `vault-verify.sh`)
+   so the retired name stops being re-created. That is a `petedio-iac` change.
+
+Until step 3 lands, re-running `vault-seed.sh` will recreate the dead path.
 
 ## The contract
 
