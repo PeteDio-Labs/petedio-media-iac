@@ -53,12 +53,15 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   policy change is needed to consume it — only a privileged **seed** (Vault admin
   token; the AppRoles can only read `services/*`). Never commit them; never widen a
   policy beyond `services/*` to reach them.
-- **Two paths exist for this one secret.** `iac/scripts/vault-seed.sh` seeds
-  `kv/services/qbittorrent` (already done, migrated from the retired homelab-infra
-  `qbittorrent.vault.yml`); this repo documents `kv/services/media/qbittorrent`
-  (0 code consumers). Same original source, two names, and both inherit the phantom
-  password. Resolve before seeding — see
-  `docs/runbooks/qbittorrent-vault-secret.md` § "Path collision".
+- **Two paths existed for this one secret — resolved 2026-08-13 by reading Vault.**
+  `kv/services/qbittorrent` (seeded by `iac/scripts/vault-seed.sh`) holds
+  `username` + `password` and **nothing else** — i.e. only the phantom credential,
+  no Proton key. `kv/services/media/qbittorrent` is **empty**. So the real secret,
+  the Proton WireGuard key, has never been in Vault at all: it lives only in
+  `/opt/qbittorrent-vpn/.env` on 110, which is currently its sole copy. Seed the
+  Proton key at the `services/media/*` path, delete `kv/services/qbittorrent`, and
+  drop its block from `iac`'s seed script or it will keep being recreated. See
+  `docs/runbooks/qbittorrent-vault-secret.md`.
 
 ## Ansible reach into the legacy media LXCs
 
