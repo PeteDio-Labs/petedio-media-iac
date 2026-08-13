@@ -20,3 +20,18 @@ media_health_timeout: 180
 # Refuse to stop a host that is actively in use (Plex streaming, qBittorrent
 # downloading). Override with -e media_lifecycle_force=true.
 media_lifecycle_force: false
+
+# The guard verdict. THREE states, and the third is the one that matters:
+#   idle     — measured, nothing in use        -> safe to stop
+#   in-use   — measured, something is in use   -> skip, and say what
+#   unknown  — COULD NOT MEASURE               -> refuse, and say why
+#
+# 'unknown' used to be folded into 'idle', so an unreachable service authorised
+# the very stop the guard exists to prevent. When a check's job is to withhold
+# permission, "I don't know" has to resolve to "no".
+#
+# The default is 'idle' because only plex and qbittorrent-vpn run a guard at all
+# (see tasks/main.yml). The other five hosts have no in-use concept and must stay
+# freely stoppable — they are not 'unknown', there is simply nothing to ask.
+media_in_use_state: idle
+media_in_use_reason: "no in-use check applies to this host"

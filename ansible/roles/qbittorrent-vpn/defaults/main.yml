@@ -4,8 +4,14 @@
 qbit_dir: /opt/qbittorrent-vpn
 qbit_compose_file: /opt/qbittorrent-vpn/docker-compose.yml
 qbit_env_file: /opt/qbittorrent-vpn/.env
+
+# IN-CONTAINER url — reached with `docker exec {{ qbit_container }} curl …`, never
+# from the host. The WebUI is published through Docker, so a host-origin request
+# is SNAT'd to the bridge gateway and falls outside WebUI\AuthSubnetWhitelist;
+# in-namespace the source really is 127.0.0.1 and needs no auth. There is no
+# WebUI password configured to fall back on. See docs/GOTCHAS.md.
 qbit_api: "http://localhost:8080"
-qbit_user: admin
+qbit_container: qbittorrent
 
 # All three services track floating tags (`:latest`, `alpine:3.20`), so "is
 # there an update" is a digest question, not a version-string question: compare

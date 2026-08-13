@@ -1,33 +1,85 @@
 # Is anyone watching? Stopping Plex mid-stream kills the playback and any
 # in-flight transcode. Token comes from Preferences.xml and is sent as a header,
 # never in the query string.
+#
+# THREE outcomes, not two. "Plex did not answer" is not "nobody is watching" —
+# see docs/GOTCHAS.md § "The in-use guards fail open". The previous version never
+# checked the status code at all: with `failed_when: false`, ANY failure (rotated
+# token, 401, connection refused, Plex mid-restart) left `.content` empty, the
+# regex matched nothing, `default('0')` won, and the guard reported idle — that
+# is, it authorised the stop it exists to prevent, against the one service whose
+# own comment says a mid-stream stop kills the transcode.
 ---
-- name: Plex — read PlexOnlineToken
-  ansible.builtin.slurp:
-    src: "{{ plex_prefs_path }}"
-  register: lifecycle_plex_prefs
-  check_mode: false
-  no_log: true
-
-- name: Plex — count active playback sessions
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ plex_port }}/status/sessions"
-    headers:
-      X-Plex-Token: >-
-        {{ (lifecycle_plex_prefs.content | b64decode
-            | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
-    return_content: true
-    timeout: 15
-  register: lifecycle_plex_sessions
+- name: Plex — is the unit even running?
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ media_service_unit }}"]
+  register: lifecycle_plex_unit
   changed_when: false
   failed_when: false
-  no_log: true
+  check_mode: false
 
-- name: Plex — record in-use state
+# Already stopped: nothing to guard, and nothing for the stop task to do either.
+# This branch is what keeps re-running stack-down.yml idempotent rather than
+# erroring out on "unknown" for a service that is legitimately already down.
+- name: Plex — record in-use state (service not running)
   ansible.builtin.set_fact:
-    media_in_use: >-
-      {{ ((lifecycle_plex_sessions.content | default('')
-           | regex_search('size="(\d+)"', '\1') | first | default('0')) | int) > 0 }}
-    media_in_use_reason: >-
-      {{ (lifecycle_plex_sessions.content | default('')
-          | regex_search('size="(\d+)"', '\1') | first | default('0')) }} active playback session(s)
+    media_in_use_state: idle
+    media_in_use_reason: "{{ media_service_unit }} is not running"
+  when: (lifecycle_plex_unit.stdout | default('') | trim) != 'active'
+
+- name: Plex — probe playback while it is running
+  when: (lifecycle_plex_unit.stdout | default('') | trim) == 'active'
+  block:
+    - name: Plex — read PlexOnlineToken
+      ansible.builtin.slurp:
+        src: "{{ plex_prefs_path }}"
+      register: lifecycle_plex_prefs
+      check_mode: false
+      failed_when: false
+      no_log: true
+
+    - name: Plex — count active playback sessions
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_port }}/status/sessions"
+        headers:
+          X-Plex-Token: >-
+            {{ (lifecycle_plex_prefs.content | default('') | b64decode
+                | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
+        return_content: true
+        timeout: 15
+      register: lifecycle_plex_sessions
+      changed_when: false
+      failed_when: false
+      no_log: true # the token rides in the headers
+
+    # /status/sessions always carries size="N". Its ABSENCE on an otherwise-200
+    # means we did not get the document we think we did, which is 'unknown' —
+    # not 'idle'. Reading the count and the reachability separately is the whole
+    # fix: the old one-liner could not tell "zero sessions" from "no answer".
+    - name: Plex — separate "did it answer" from "what did it say"
+      ansible.builtin.set_fact:
+        lifecycle_plex_ok: "{{ (lifecycle_plex_sessions.status | default(0)) == 200 }}"
+        # `or ['']` is load-bearing: with a capture group, regex_search returns a
+        # LIST on match and None on no-match, and `None | first` raises rather
+        # than yielding a value. Unreachable Plex -> empty content -> no match ->
+        # crash, which is how the ORIGINAL guard behaved too (it is what the
+        # bogus-port test hit). Convert the miss to a real value so the three-way
+        # classification below can do its job.
+        lifecycle_plex_size: >-
+          {{ ((lifecycle_plex_sessions.content | default('')
+               | regex_search('size="(\d+)"', '\1')) or ['']) | first | trim }}
+
+    - name: Plex — record in-use state
+      ansible.builtin.set_fact:
+        media_in_use_state: >-
+          {{ ('in-use' if (lifecycle_plex_size | int) > 0 else 'idle')
+             if ((lifecycle_plex_ok | bool) and lifecycle_plex_size != '')
+             else 'unknown' }}
+        media_in_use_reason: >-
+          {{ (lifecycle_plex_size ~ ' active playback session(s)')
+             if ((lifecycle_plex_ok | bool) and lifecycle_plex_size != '')
+             else ('could not read Plex sessions (HTTP '
+                   ~ ('no response' if (lifecycle_plex_sessions.status | default(-1)) | int == -1
+                      else lifecycle_plex_sessions.status) ~ ', size='
+                   ~ (lifecycle_plex_size if lifecycle_plex_size != '' else 'absent')
+                   ~ ') — that is NOT a confirmation that nobody is watching') }}
