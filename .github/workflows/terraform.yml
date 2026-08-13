@@ -20,10 +20,28 @@
 # the operator) before the apply job can mint a token.
 name: terraform
 
+# PATH FILTERING IS ASYMMETRIC ON PURPOSE.
+#   pull_request — deliberately UNFILTERED. `validate` is hosted, ~15s, and costs nothing; keeping
+#     it reporting on every PR means turning on a branch-protection required check later can never
+#     hang a docs-only PR waiting for a run that a `paths` filter suppressed.
+#   push         — filtered, because this is the trigger that mints `media-ci` credentials on the
+#     self-hosted runner. A docs commit cannot change desired state, so it has no business getting
+#     LAN-scoped MinIO + Proxmox creds on a box that can reach 192.168.50.0/24. Same fix
+#     petedio-iac made under PET-250 (PR #131).
+#
+# DENY-list, not allow-list, and that direction matters: `paths` would fail CLOSED — add a new
+# Terraform directory, forget to list it, and merges silently stop applying, which is exactly the
+# merged-but-never-applied drift PET-165 was opened for. `paths-ignore` fails OPEN: the worst case
+# is one unnecessary no-op plan. Prefer the wasteful failure over the invisible one.
 on:
   pull_request: {}
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - docs/**
+      - scripts/**
+      - ansible/**
 
 # Serialize media-iac runs: the MinIO state backend has no locking (backend.tf), so concurrent
 # applies racing the same state file is a footgun. cancel-in-progress: false queues instead of
@@ -91,6 +109,29 @@ jobs:
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
+
+      # Vault comes up SEALED after every reboot of .223 and stays that way until an operator
+      # unseals it by hand — the keys live in the password manager, deliberately never in CI
+      # (petedio-iac docs/runbooks/vault-resilience.md). That is expected behaviour, but
+      # vault-action reports it as `ERR_NON_2XX_3XX_RESPONSE, Response code 503`, which reads like
+      # a network fault and sends you debugging the runner's LAN path instead of just unsealing
+      # Vault. Ask the question directly and fail with the sentence that names the fix.
+      - name: Vault — preflight (reachable and unsealed?)
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! seal="$(curl -sS --cacert vault-ca.crt --max-time 15 \
+                        https://192.168.50.223:8200/v1/sys/seal-status 2>&1)"; then
+            echo "::error title=Vault unreachable::Could not reach https://192.168.50.223:8200 from the runner — is LXC 223 up? curl: ${seal}"
+            exit 1
+          fi
+          echo "seal-status: ${seal}"
+          case "$seal" in
+            *'"sealed":true'*)
+              echo "::error title=Vault is sealed::Vault (.223) is sealed, so CI cannot mint media-ci creds. Vault seals on every reboot of 223 and must be unsealed by hand: run 'vault operator unseal' on .223 with the key from the password manager (petedio-iac docs/runbooks/vault-resilience.md), then re-run this job."
+              exit 1
+              ;;
+          esac
 
       # vault-action's `caCertificate` wants BASE64-encoded PEM, and a `with:` value can't read a
       # file — so emit the committed self-signed Vault CA (relative to working-directory) as a
