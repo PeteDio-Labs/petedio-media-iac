@@ -137,7 +137,7 @@ problem, and no secret is ever written into the repo or an image.
 
 **Blast radius, stated plainly.** This LXC becomes the highest-value target in the
 media stack: four *arr keys (each equivalent to full control of its app), the seerr
-key, the Plex token, and the qBit password, all in one process. Phase 1 stays
+key, and the Plex token — **six**, not seven, all in one process. Phase 1 stays
 read-only, the host keeps the Proxmox firewall on with only the UI port inbound, and
 Phase 2 does not ship without auth in front of it.
 
@@ -284,7 +284,11 @@ So:
 - **Lifecycle ordering** — it consumes everything and produces nothing, so it belongs
   in the outermost tier: **down first, up last**, alongside plex/seerr. It has no
   in-use guard; nobody is harmed by restarting it.
-- **CI** — the existing plan-on-PR covers the new module block with no workflow change.
+- **CI** — no workflow change needed, but note what that buys: PRs run `validate`
+  only (hosted, no Vault/LAN/state). There is **no plan on a PR** — `terraform plan`
+  runs inside the apply job on merge. So a greenfield module block gets its first
+  real plan *at merge time*, which is the argument in §3 for watching that first
+  apply rather than merging it on a Friday.
 
 ## 11. What I would deliberately not build
 

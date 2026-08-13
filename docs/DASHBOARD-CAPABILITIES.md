@@ -465,10 +465,16 @@ Today every credential is read *on the host it belongs to* and used over loopbac
 `roles/servarr` says so explicitly: *"Always talk to the app over loopback — the API
 key never leaves the container."*
 
-A dashboard cannot preserve that. It has to hold **seven credentials centrally** — four
-*arr API keys, the seerr key, the Plex token, the qBit password — and each *arr key is
-equivalent to full control of that app. That makes the dashboard the most
-privilege-concentrated thing in the media stack.
+A dashboard cannot preserve that. It has to hold **six credentials centrally** — four
+*arr API keys, the seerr key, and the Plex token — and each *arr key is equivalent to
+full control of that app. That makes the dashboard the most privilege-concentrated
+thing in the media stack.
+
+**Six, not seven: there is no qBittorrent credential to hold.** Earlier drafts counted
+a qBit password; it does not exist (no `WebUI\Password_PBKDF2` at all — the subnet
+whitelist is the auth). A dashboard reaching qBittorrent does so from a whitelisted
+source or not at all, which is a real constraint on *where it runs* rather than one
+more secret to store. See § qBittorrent WebUI API.
 
 What follows from that:
 
