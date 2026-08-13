@@ -136,15 +136,14 @@ password) and `port-sync/port-sync.sh`, which the compose file mounts from the h
 Bringing the `.env` in means first seeding those secrets into this repo's Vault scope
 — see `docs/runbooks/qbittorrent-vault-secret.md`.
 
-> ⚠ The WebUI password in that `.env` **does not authenticate** (found 2026-08-13),
-> and the failed attempts got `127.0.0.1` banned for an hour — during which
-> qBittorrent refuses *every* request, so the API is currently unreadable.
-> qBittorrent is configured with `WebUI\AuthSubnetWhitelistEnabled=true` over
-> `127.0.0.1/32, 192.168.50.0/24`, which should make reads work with no login at
-> all; that has not yet been observed working, because the ban has masked it
-> throughout. **Verify the whitelist once the ban lapses, and treat the stale
-> password as a separate problem.** It breaks the `media-lifecycle` in-use guard —
-> see `docs/GOTCHAS.md`.
+> ⚠ **`QBIT_WEBUI_PASSWORD` in that `.env` is a phantom** (found 2026-08-13):
+> qBittorrent has no WebUI password configured at all, so nothing matches it and a
+> login with it can only ever fail — five failures ban the source IP for an hour.
+> Access control is the subnet whitelist, and that whitelist **cannot be reached from
+> LXC 110's own host**: the WebUI is published through Docker, so a host-origin
+> request is SNAT'd to the bridge gateway (`172.18.0.1`) and falls outside it. Use
+> `docker exec qbittorrent curl …` instead. This is why `media-lifecycle`'s
+> qBittorrent in-use guard has never worked — see `docs/GOTCHAS.md`.
 
 ## Captured hosts (live VMID/IP — permanent; the 21x renumber was canceled, PET-49)
 

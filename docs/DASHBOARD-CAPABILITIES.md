@@ -31,11 +31,14 @@ unroutable from a cloud container). Each claim is tagged:
 ./scripts/api-capability-probe.sh -o ./probe-out   # keep the raw JSON
 ```
 
-### Probe run 2026-08-13 — 32 answered · 6 did not · 3 skipped
+### Probe run 2026-08-13 — 39 answered · 1 did not · 1 skipped
 
-All seven hosts reached. **The headline: the join holds.** `externalServiceId` comes
-back populated, so §7 Phase 0 is unblocked and nothing below degrades to title
-matching. Details in §1 and §8.1.
+All seven hosts reached, every capability in this document exercised. **The headline:
+the join holds.** `externalServiceId` comes back populated, so §7 Phase 0 is unblocked
+and nothing below degrades to title matching. Details in §1 and §8.1.
+
+The single remaining "did not" is Prowlarr's `/queue` (a real 404, below); the single
+skip is gluetun's `/v1/vpn/status` (401, below). Nothing else is unproven.
 
 Four things the run changed, each of which had been asserted here and was wrong:
 
@@ -48,9 +51,12 @@ Four things the run changed, each of which had been asserted here and was wrong:
 - **`port-sync` is currently healthy** — gluetun's forwarded port and qBittorrent's
   `Session\Port` are both `43971`. The failure mode §2 describes is real; it is just
   not firing today.
-- **qBittorrent's API is not reachable the way this doc assumed**, and finding that
-  out cost an hour-long IP ban. See §2's auth note — it is the one operational
-  problem the run surfaced.
+- **qBittorrent's API is not reachable the way this doc assumed** — it has no WebUI
+  password at all, and its subnet whitelist cannot be reached from the LXC host
+  because Docker SNATs host-origin traffic to the bridge gateway. Finding that out
+  cost an hour-long IP ban. It also means `media-lifecycle`'s qBittorrent in-use
+  guard has never worked. See §2's auth note — the one real operational problem the
+  run surfaced.
 
 > The probe itself was also broken on first contact: `declare -A` on a bash-3.2 Mac
 > meant it had never run anywhere, and a `jq -R` wrapper was reporting a green YES
@@ -67,8 +73,8 @@ seerr request
        └─ /api/v3/episode?seriesId=…  ──► exact episodes, per-episode hasFile [live]
        └─ /api/v3/queue .downloadId   ──► torrent infohash                    [live]
             └─ qBittorrent /torrents/info?hashes=…  ──► state, seeds, ETA     [live]
-                 ├─ /torrents/trackers?hash=…  ──► WHY it's dead ("unregistered") [probe]
-                 ├─ /torrents/files?hash=…     ──► per-episode files in a pack  [probe]
+                 ├─ /torrents/trackers?hash=…  ──► WHY it's dead ("unregistered") [live]
+                 ├─ /torrents/files?hash=…     ──► per-episode files in a pack  [live]
                  └─ gluetun /v1/portforward    ──► is the tunnel port even right? [live]
   └─ .media.ratingKey ──────────────────► Plex /library/metadata/{ratingKey}  [live]
   └─ .media.serviceId ──────────────────► which Sonarr/Radarr instance        [live]
@@ -122,7 +128,7 @@ Ports, API versions and data paths below are the captured reality from
 
 ### seerr (101 / .33 · `:5055` · `/api/v1` · `X-Api-Key`)
 
-Key lives in `/opt/seerr/config/settings.json` **[probe]**. Overseerr-lineage API.
+Key lives in `/opt/seerr/config/settings.json` **[live]**. Overseerr-lineage API.
 
 | Capability | Endpoint | Tag |
 |---|---|---|
@@ -158,7 +164,7 @@ Key + port read from `/var/lib/<app>/config.xml` **[live]** — the pattern the
 | Queue with failure detail | `GET /queue?pageSize&includeUnknownSeriesItems=true` | [src] |
 | What's monitored and missing | `GET /wanted/missing?monitored=true&includeSeries=true` (paged, sorts on `episodes.airDateUtc`) | [src] |
 | Grab/import history | `GET /history`, `GET /history/since` | [probe] |
-| Health warnings | `GET /health` | [probe] |
+| Health warnings | `GET /health` | [live] |
 | Version + update feed | `GET /system/status`, `GET /update` | [live] |
 | Trigger a search | `POST /command` `{name: "EpisodeSearch", episodeIds: […]}` | [src] |
 | **Blocklist a bad grab and re-search** | `DELETE /queue/{id}?removeFromClient=true&blocklist=true&skipRedownload=false` | [src] |
@@ -199,10 +205,10 @@ Token from `Preferences.xml` **[live]**. XML by default — send
 | Capability | Endpoint | Tag |
 |---|---|---|
 | Who is watching (already used as a stop-guard) | `GET /status/sessions` | [live] |
-| Libraries + last scan time | `GET /library/sections` | [probe] |
+| Libraries + last scan time | `GET /library/sections` | [live] |
 | **Trigger a scan, optionally one path** | `GET /library/sections/{key}/refresh[?path=…]` | [probe] |
 | Item by the rating key seerr stored | `GET /library/metadata/{ratingKey}` | [probe] |
-| Server version / identity | `GET /` | [probe] |
+| Server version / identity | `GET /` | [live] |
 
 ### qBittorrent + Gluetun (110 /.21) — the deepest integration, and the most gotchas
 
@@ -225,38 +231,67 @@ WebUI\AuthSubnetWhitelist=127.0.0.1/32, 192.168.50.0/24
 WebUI\AuthSubnetWhitelistEnabled=true
 ```
 
-On that config a loopback or LAN request should need **no login and no cookie** — the
-whitelist is qBittorrent's documented way to say exactly that. **Read that as the
-intent, not as a measurement:** it has not been observed working, because the host has
-been banned for the entire window in which anyone tried (below). Confirming it is the
-first thing to do once the ban lapses.
+**There is no `WebUI\Password_PBKDF2` in that config at all, and no `WebUI\Username`.**
+qBittorrent has no WebUI password. The whitelist *is* the access control.
 
-What *is* measured: logging in is not free. qBittorrent bans the source IP for an hour
-after `WebUI\MaxAuthenticationFailCount` (default 5) failures, and **a banned IP is
-then refused on every path, whitelist included**.
+So `QBIT_WEBUI_PASSWORD` in `/opt/qbittorrent-vpn/.env` is a **phantom credential** —
+there is nothing for it to match, and logging in with it cannot succeed no matter how
+many times it is tried. Five tries ban the source IP for an hour.
 
-The probe's first live run logged in once per probe using `QBIT_WEBUI_PASSWORD` from
-`/opt/qbittorrent-vpn/.env`. The password parses (32 chars) but does not authenticate —
-`/auth/login` answers *"Your IP address has been banned after too many failed
-authentication attempts"* — so six probes exhausted the counter and banned
-`127.0.0.1`. Every qBittorrent endpoint has returned `Forbidden` since.
+### …and the whitelist is unreachable from the LXC host
 
-A trap worth recording, because it cost a second round: **a banned host answers
-`Forbidden`, not the ban message.** Only `/auth/login` says "banned". So "retry the
-login unless we look banned" cannot distinguish a first failure from a hundredth, and
-each run silently re-arms the hour it was trying to wait out. The probe therefore no
-longer logs in at all unless asked (`-l`).
+This is the part that makes the whole thing counter-intuitive, and it is why the
+first read of this looked like "the password went stale":
+
+```
+curl localhost:8080  ON LXC 110      →  Forbidden   (always)
+docker exec qbittorrent curl …       →  v5.2.3      (always)
+```
+
+qBittorrent shares gluetun's netns and the WebUI is published `8080:8080` on the
+`qbittorrent-vpn_default` bridge (gluetun at `172.18.0.2`, gateway `172.18.0.1`). A
+request **originating on the host** to `localhost:8080` is SNAT'd to `172.18.0.1`
+before qBittorrent sees a source address — and `172.18.0.1` is in neither
+`127.0.0.1/32` nor `192.168.50.0/24`. It is refused every time, with no password to
+fall back on.
+
+Inside the namespace the source genuinely *is* `127.0.0.1`, the whitelist applies, and
+everything answers. That is exactly what the container's own healthcheck does
+(`curl -fsS http://localhost:8080/api/v2/app/version`), which is why it has reported
+`healthy` for 26 hours throughout all of this. **The healthcheck and the host were
+never testing the same path.**
+
+Anything reading this API from LXC 110 must therefore go through `docker exec` — which
+is what the probe now does, and why its qBittorrent section went from 1/6 to 7/7.
+
+The probe's first live run did the worst available combination: a host-side curl (never
+whitelisted) *plus* a login (never satisfiable) once **per probe**. Six probes exhausted
+the counter and banned `127.0.0.1` for an hour.
+
+A trap worth recording, because it cost a whole extra round of diagnosis: **a banned
+host answers `Forbidden`, not the ban message.** Only `/auth/login` ever says "banned".
+So "retry the login unless we look banned" cannot distinguish a first failure from a
+hundredth — and worse, `Forbidden` is *also* the normal answer for a non-whitelisted
+source, so the ban and the DNAT problem are indistinguishable from the host. Waiting the
+ban out (66 minutes of polling) changed nothing, which is what finally pointed at the
+real cause.
 
 **Two things follow, and the second is the one that matters:**
 
-1. Anything reading this API from the host or the LAN should just *not log in* —
-   and should not "helpfully" retry when refused.
-2. **The `.env` password is stale, and that exposed a fail-open bug in the lifecycle
-   guards.** Chased down and confirmed in `roles/media-lifecycle` — see
-   [GOTCHAS.md § "The in-use guards fail open"](GOTCHAS.md). Both guards collapse
-   *"I could not determine whether this is in use"* into *"it is not in use"*, so a
-   broken credential reads as consent to stop the service. `stack-down.yml` against
-   qBittorrent is doing exactly that today.
+1. Anything reading this API from LXC 110 should go through `docker exec`, not log in,
+   and not "helpfully" retry when refused.
+2. **`roles/media-lifecycle`'s qBittorrent guard takes exactly this broken path, and
+   fails open on it.** `host_vars/qbittorrent-vpn.yml` sets
+   `qbit_api: "http://localhost:8080"`, and Ansible's `uri` module runs on the target
+   host — so the guard is the host-side curl described above. It gets `Forbidden`,
+   every time, and has since the compose stack was built. Then the guard collapses
+   *"I could not determine whether this is in use"* into *"it is not in use"*, so
+   `stack-down.yml` will stop qBittorrent mid-download and report no reason not to.
+
+   The `.env` password never worked, so this was never a regression — the fail-open
+   default is what kept it invisible. See
+   [GOTCHAS.md § "The in-use guards fail open"](GOTCHAS.md). The Plex guard has the
+   same fail-open shape for its own reasons.
 
    This is the same shape as the seerr `creates:` incident in `.agent/lessons.md`: a
    check that cannot fail loudly is not a check. **Not fixed here** — failing closed
@@ -268,12 +303,12 @@ longer logs in at all unless asked (`-l`).
 | **Torrent by infohash — the join target** | `GET /torrents/info?hashes={downloadId}` | [live] |
 | Filtered lists (`downloading`, `stalled`, `errored`, …) | `GET /torrents/info?filter=…` | [live] |
 | **Which app owns it, without the hash** | `GET /torrents/info?category=tv-sonarr\|radarr` | [probe] |
-| **Why a torrent is dead** — tracker status + message | `GET /torrents/trackers?hash=` | [probe] |
-| **Per-file progress inside a season pack** | `GET /torrents/files?hash=` | [probe] |
+| **Why a torrent is dead** — tracker status + message | `GET /torrents/trackers?hash=` | [live] |
+| **Per-file progress inside a season pack** | `GET /torrents/files?hash=` | [live] |
 | Deep detail (seeding time, reannounce, piece counts) | `GET /torrents/properties?hash=` | [probe] |
-| Tunnel throughput + connection state | `GET /transfer/info` | [probe] |
-| **Delta polling — one call for the whole UI** | `GET /sync/maindata?rid=N` | [probe] |
-| Version (drives the naming gotcha below) | `GET /app/version` | [probe] |
+| Tunnel throughput + connection state | `GET /transfer/info` | [live] |
+| **Delta polling — one call for the whole UI** | `GET /sync/maindata?rid=N` | [live] |
+| Version (drives the naming gotcha below) | `GET /app/version` | [live] |
 
 Four things here matter more than the rest:
 
@@ -365,10 +400,22 @@ whole proposal, and it costs two GETs — **neither of which needs a credential*
 (gluetun's `/v1/portforward` is unauthenticated, and qBit's port is also readable
 straight from `qBittorrent.conf` as `Session\Port`, no API session at all).
 
-**Measured 2026-08-13: healthy.** gluetun reports `{"port":43971}` and
-`qBittorrent.conf` has `Session\Port=43971`. All three containers up 26h. So the
-failure mode above is real but not currently firing — which also means the widget
-has a known-good baseline to have been built against.
+**Measured 2026-08-13: healthy.** Both sides read from their own APIs:
+
+```json
+gluetun /v1/portforward   →  {"port":43971,"ports":[43971]}
+qBit    /app/preferences  →  {"listen_port":43971,"random_port":false,"upnp":false}
+```
+
+All three containers up 26h. So the failure mode above is real but not currently
+firing — which also means the widget has a known-good baseline to have been built
+against.
+
+The two per-torrent diagnostics behind it are confirmed too: `/torrents/trackers`
+returns the tracker rows with `status` and `msg` (DHT/PeX/LSD all `status: 2`,
+working), and `/torrents/files` returns **48 files** for a season pack with per-file
+`progress` — the episode-level truth inside a pack that §2 calls the missing half of
+"pull exact episodes".
 
 (Templating `port-sync.sh` into this repo is a separate, smaller task worth doing on
 its own merits — the README already flags the compose file's unmanaged `.env` as
@@ -518,10 +565,11 @@ single field once the join exists:
    on real requests, and `queue.downloadId` is the torrent infohash. The join chain
    holds end to end; see §1. Phase 0 is unblocked.
 
-   The probe did surface one genuinely new question in its place: **is the
-   qBittorrent WebUI password in `/opt/qbittorrent-vpn/.env` simply stale, or was it
-   never right?** Access works today only because of the subnet whitelist, and the
-   `media-lifecycle` in-use guards depend on that login succeeding.
+   The probe surfaced one genuinely new question in its place, now answered too:
+   **`QBIT_WEBUI_PASSWORD` is a phantom** — qBittorrent has no WebUI password at all,
+   and its whitelist is unreachable from the LXC host because of Docker's SNAT. The
+   live question that remains is what to do about `media-lifecycle`, whose qBittorrent
+   in-use guard has consequently never worked.
 2. **Cleanuparr first?** If self-healing queues removes most of the triage, Phase 1
    shrinks to a viewer and Phase 2 may never be needed.
 3. **Read-only for how long?** Write endpoints are what force the auth decision, and

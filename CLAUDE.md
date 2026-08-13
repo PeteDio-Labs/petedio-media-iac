@@ -93,11 +93,17 @@ Playbooks: `check-updates.yml` (read-only report) · `update-media.yml` ·
 `media-roles.yml` is the shared play body both update entry points import, so a
 dry-run and an apply exercise the same code.
 
-**Read `docs/GOTCHAS.md` before touching a role.** Two live traps: every role that
-asserts a baseline must measure it first (the `media-base` timezone incident
-converted four hosts), and the `media-lifecycle` in-use guards currently **fail
-open** — an undeterminable state reads as "not in use", which is an open bug, not
-a design.
+**Read `docs/GOTCHAS.md` before touching a role.** Three live traps:
+
+- Every role that asserts a baseline must **measure** it first — the `media-base`
+  timezone incident silently converted four hosts.
+- The `media-lifecycle` in-use guards **fail open**: an undeterminable state reads as
+  "not in use", so a stop proceeds. Open bug, not a design.
+- **qBittorrent's API is unreachable from LXC 110's own host.** It has no WebUI
+  password (the `.env` one is a phantom that only earns hour-long IP bans), and its
+  subnet whitelist can't match a host-origin request because Docker SNATs it to the
+  bridge gateway. Use `docker exec qbittorrent curl …`. This is why the qBittorrent
+  in-use guard has never worked.
 
 ## Runtime / tooling
 

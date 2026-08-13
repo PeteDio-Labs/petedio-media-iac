@@ -2,17 +2,24 @@
 # api-capability-probe.sh — ground-truth what the media stack's APIs actually
 # expose, before anything is built on top of them.
 #
-# STRICTLY READ-ONLY. Every call is a GET, with one exception: qBittorrent's
-# /auth/login is a POST because its API has no other way to obtain a session.
-# Nothing here creates, updates, deletes, searches, or triggers a command.
+# STRICTLY READ-ONLY, and now literally so: every call is a GET. There are no
+# POSTs at all. Nothing creates, updates, deletes, searches, or triggers a command.
+#
+# An earlier version made one exception — qBittorrent's /auth/login — on the
+# grounds that its API had "no other way to obtain a session". That was wrong on
+# both counts: the whitelist is another way, and the exception was not harmless.
+# Five failed logins ban the source IP for an hour, so the one POST in a
+# "read-only" script was the one thing in it that could take a service away from
+# you. Read-only has to mean no side effects, not just no writes.
 #
 # WHY IT RUNS OVER SSH RATHER THAN STRAIGHT AT THE LAN IP
 # -------------------------------------------------------
 # Each *arr's API key is equivalent to full control of that app. The Ansible
 # `servarr` role deliberately talks to 127.0.0.1 so the key never leaves the
-# container, and this probe keeps that property: the curl runs ON the host, the
-# key is read from that host's own config, and only the RESPONSE crosses the
-# LAN. Keys are never printed and never land in your shell history.
+# container, and this probe keeps that property: the curl runs ON the host (or,
+# for qBittorrent, inside its container — see that section), the key is read from
+# that host's own config, and only the RESPONSE crosses the LAN. Keys are never
+# printed and never land in your shell history.
 #
 # (A dashboard cannot preserve this property — it has to hold every key
 # centrally. That is a real security decision, not an implementation detail;
@@ -22,15 +29,10 @@
 #   ./scripts/api-capability-probe.sh              # summary: what answered
 #   ./scripts/api-capability-probe.sh -v           # + a shape sample per probe
 #   ./scripts/api-capability-probe.sh -o ./out     # also dump raw JSON per probe
-#   ./scripts/api-capability-probe.sh -l           # ALSO log in to qBittorrent
 #
-# -l is opt-in on purpose. qBittorrent bans the source IP for an hour after 5 failed
-# logins, and a banned IP is refused even on the paths that need no login at all — so
-# a probe that logs in speculatively can lock you out of the thing it is measuring.
-# Reads go over qBittorrent's subnet whitelist by default; use -l only to test the
-# credential itself.
-#
-# Requires: ssh, jq (locally — the LXCs are not assumed to have it).
+# Requires: ssh, jq (locally — the LXCs are not assumed to have it). qBittorrent's
+# probes additionally need `docker exec` on LXC 110, which is how they reach the
+# subnet whitelist; see that section for why the host-side port cannot.
 #
 # Kept compatible with bash 3.2, which is what /usr/bin/env bash resolves to on a
 # stock macOS — so no associative arrays, no `${var,,}`, no `mapfile`. The Mac in
@@ -40,17 +42,15 @@ set -uo pipefail
 
 VERBOSE=0
 OUTDIR=""
-QB_LOGIN=0
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_ansible}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 
-while getopts "vlo:k:h" opt; do
+while getopts "vo:k:h" opt; do
   case "$opt" in
     v) VERBOSE=1 ;;
-    l) QB_LOGIN=1 ;;
     o) OUTDIR="$OPTARG" ;;
     k) SSH_KEY="$OPTARG" ;;
-    h) sed -n '2,36p' "$0"; exit 0 ;;
+    h) sed -n '2,39p' "$0"; exit 0 ;;
     *) exit 2 ;;
   esac
 done
@@ -243,46 +243,46 @@ report plex "updater/status (expect: unsupported)" \
 NOTES+=("plex: an empty or error 'updater/status' CONFIRMS the apt path is the only real update route — see docs/DASHBOARD-CAPABILITIES.md § 3.")
 
 # ------------------------------------------------------------- qbittorrent --
-# Auth here is NOT simply "cookie auth", and getting that wrong is expensive.
+# qBittorrent has NO WebUI password and does not want one — read this before "fixing" it.
 #
-# LXC 110 runs with WebUI\AuthSubnetWhitelistEnabled=true covering 127.0.0.1/32 and
-# 192.168.50.0/24, so a loopback GET is already authenticated and needs no session at
-# all. Logging in anyway is not free: qBittorrent bans the SOURCE IP for an hour after
-# WebUI\MaxAuthenticationFailCount (default 5) failed attempts, and a banned IP is
-# refused even on the whitelist path. The first version of this script logged in once
-# PER PROBE with the password from .env; when that password did not match, six probes
-# burned through the counter and banned 127.0.0.1 — locking out the very access the
-# whitelist grants. A "strictly read-only" probe that can lock you out of a live
-# service is not read-only.
+# There is no `WebUI\Password_PBKDF2` in qBittorrent.conf at all. Access control is
+# entirely `WebUI\AuthSubnetWhitelistEnabled=true` over `127.0.0.1/32, 192.168.50.0/24`.
+# So `QBIT_WEBUI_PASSWORD` in /opt/qbittorrent-vpn/.env is a PHANTOM credential: there is
+# nothing for it to match, logging in with it can only ever fail, and five failures ban
+# the source IP for an hour.
 #
-# So this probe does NOT log in by default. It reads over the whitelist and, if that is
-# refused, says so and stops — rather than reaching for a credential that might be wrong.
-# `-l` opts back in when you actually want to test the login path.
+# And the whitelist cannot be reached from the LXC host. The WebUI is published through
+# Docker (`8080:8080` on gluetun, which qbittorrent shares a netns with), so a request
+# originating ON the host to localhost:8080 is SNAT'd to the bridge gateway (172.18.0.1)
+# before qBittorrent sees the source — outside the whitelist, refused every time. Both
+# `curl localhost:8080` on the host and `curl 192.168.50.21:8080` hairpin into that.
 #
-# Auto-retrying was tried and is a trap: a banned host answers "Forbidden", not "banned"
-# (the ban wording only comes back from /auth/login), so "fall back to a login unless
-# already banned" cannot tell a first failure from a hundredth, and every run quietly
-# refreshes the ban it is trying to avoid. There is no safe way to probe your way out of
-# this; the only safe move is not to knock.
+# The first version of this script did the worst possible combination: host-side curl
+# (never whitelisted) plus a login (never satisfiable) once PER PROBE, which burned
+# through the ban counter and locked 127.0.0.1 out for an hour. A "strictly read-only"
+# probe that can lock you out of a live service is not read-only.
+#
+# `docker exec` runs the curl INSIDE the namespace, where the source genuinely is
+# 127.0.0.1 and the whitelist applies. That is exactly what the container's own
+# healthcheck does, which is why it has stayed green throughout. No login, no cookie,
+# nothing to ban. Verified: returns v5.2.3 and live torrent data.
 hr qbittorrent-vpn
-if [[ "$QB_LOGIN" == 1 ]]; then
-  QB_PRE='C=$(mktemp); \
-    P=$(sed -n "s/^QBIT_WEBUI_PASSWORD=//p" /opt/qbittorrent-vpn/.env | tr -d "\r"); \
-    curl -sS --max-time 20 -c "$C" -H "Referer: http://localhost:8080" \
-      --data-urlencode "username=admin" --data-urlencode "password=$P" \
-      http://localhost:8080/api/v2/auth/login >/dev/null 2>&1'
-else
-  QB_PRE='C=$(mktemp)'
-fi
-QB_GET='curl -sS --max-time 20 -b "$C" -H "Referer: http://localhost:8080"'
+QB_GET='docker exec qbittorrent curl -sS --max-time 20'
 
 QB='http://localhost:8080/api/v2'
 
-# Auth canary, before anything else. If this host is banned or the whitelist is off,
+# Canary, before anything else — one call, reused as the app/version probe below.
+# Via docker exec this should always answer; a failure here means the container is
+# down or renamed, not that a capability is missing, and every qBit probe below
+# will fail for that one reason. Say it once rather than five times.
+# (Retained: if anyone reverts this section to a host-side curl, they get the
+# Forbidden branch and a note explaining exactly why, instead of five silent NOs.)
+# --- old rationale, kept because it is the thing that bit us -------------------
+# If this host is banned or the whitelist is off,
 # EVERY probe below returns "Forbidden" and the report reads as five unrelated missing
 # capabilities. Diagnose it once, here, so the rest of the section is interpretable.
 # (Doubles as the app/version probe further down — one call, not two.)
-QB_AUTH="$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET $QB/app/version; rm -f \"\$C\"")"
+QB_AUTH="$(ssh_curl qbittorrent-vpn "$QB_GET $QB/app/version")"
 case "$QB_AUTH" in
   v[0-9]*) : ;;
   *banned*)
@@ -291,16 +291,16 @@ case "$QB_AUTH" in
     ;;
   *)
     printf '  %-34s \033[31mFORBIDDEN / no answer\033[0m\n' "qbittorrent auth"
-    NOTES+=("qBittorrent refused an unauthenticated loopback GET, so every qBit probe below is blocked by AUTH, not by a missing capability. Either the subnet whitelist is off or this IP is still banned — and the two are indistinguishable from here, because a banned host answers 'Forbidden' too. Wait out the ban (1h from the last failed login) before concluding the whitelist does not work. Re-run with -l to test the .env credential itself, knowing that a wrong one re-arms the ban.")
+    NOTES+=("qBittorrent did not answer via 'docker exec qbittorrent curl'. Every qBit probe below fails for that one reason, not because a capability is missing. Check the container is up and still named 'qbittorrent'. Do NOT switch this to a host-side curl against localhost:8080 — the WebUI is published through Docker, so a host-origin request is SNAT'd to the bridge gateway (172.18.0.1) and falls outside WebUI\\AuthSubnetWhitelist; it is refused no matter what, and there is no password to fall back on.")
     ;;
 esac
 
 report qbittorrent-vpn "torrents/info (hash join key)" \
-  "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET '$QB/torrents/info?limit=5'; rm -f \"\$C\"")" \
+  "$(ssh_curl qbittorrent-vpn "$QB_GET '$QB/torrents/info?limit=5'")" \
   '{torrents: length, sample: (.[0] // {} | {hash, name, state, progress, dlspeed, eta, num_seeds, num_complete, category, tags, save_path})}'
 
 report qbittorrent-vpn "transfer/info (tunnel throughput)" \
-  "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET $QB/transfer/info; rm -f \"\$C\"")" \
+  "$(ssh_curl qbittorrent-vpn "$QB_GET $QB/transfer/info")" \
   '{dl_info_speed, up_info_speed, connection_status}'
 
 # Version decides the action-endpoint naming: qBittorrent 5.0 renamed
@@ -327,23 +327,23 @@ esac
 # listen_port is half of the port-forward comparison; gluetun's /v1/portforward
 # is the other half. A mismatch is the signature of a dead port-sync sidecar.
 report qbittorrent-vpn "app/preferences (listen_port)" \
-  "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET $QB/app/preferences; rm -f \"\$C\"")" \
+  "$(ssh_curl qbittorrent-vpn "$QB_GET $QB/app/preferences")" \
   '{listen_port, random_port, upnp, max_connec, queueing_enabled, save_path}'
 
 # Delta-polling endpoint the WebUI itself uses — top-level shape only, it is big.
 report qbittorrent-vpn "sync/maindata (delta polling)" \
-  "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET '$QB/sync/maindata?rid=0'; rm -f \"\$C\"")" \
+  "$(ssh_curl qbittorrent-vpn "$QB_GET '$QB/sync/maindata?rid=0'")" \
   '{rid, full_update, torrent_count: (.torrents | length), keys: (keys)}'
 
 # Per-torrent diagnostics: tracker msg is the real "why is this dead" field, and
 # the file list is episode-level truth inside a season pack.
-QB_HASH="$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET '$QB/torrents/info?limit=1'; rm -f \"\$C\"" | jq -r '.[0].hash // empty' 2>/dev/null)"
+QB_HASH="$(ssh_curl qbittorrent-vpn "$QB_GET '$QB/torrents/info?limit=1'" | jq -r '.[0].hash // empty' 2>/dev/null)"
 if [[ -n "$QB_HASH" ]]; then
   report qbittorrent-vpn "torrents/trackers (why it's dead)" \
-    "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET '$QB/torrents/trackers?hash=$QB_HASH'; rm -f \"\$C\"")" \
+    "$(ssh_curl qbittorrent-vpn "$QB_GET '$QB/torrents/trackers?hash=$QB_HASH'")" \
     '[.[] | {url: (.url | .[0:48]), status, msg, num_seeds, num_peers}]'
   report qbittorrent-vpn "torrents/files (per-episode in pack)" \
-    "$(ssh_curl qbittorrent-vpn "$QB_PRE; $QB_GET '$QB/torrents/files?hash=$QB_HASH'; rm -f \"\$C\"")" \
+    "$(ssh_curl qbittorrent-vpn "$QB_GET '$QB/torrents/files?hash=$QB_HASH'")" \
     '{files: length, sample: [limit(4; .[] | {name: (.name | split("/") | last), progress, priority})]}'
 else
   printf '  %-34s \033[33mSKIP (no torrents present)\033[0m\n' "torrents/trackers + files"; SKIP=$((SKIP + 2))
