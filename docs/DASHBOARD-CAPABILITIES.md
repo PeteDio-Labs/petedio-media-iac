@@ -290,8 +290,9 @@ real cause.
 
    The `.env` password never worked, so this was never a regression — the fail-open
    default is what kept it invisible. See
-   [GOTCHAS.md § "The in-use guards fail open"](GOTCHAS.md). The Plex guard has the
-   same fail-open shape for its own reasons.
+   [GOTCHAS.md § "The in-use guards cannot say I could not tell"](GOTCHAS.md). The
+   Plex guard shares the blind spot but expresses it differently — it crashes rather
+   than permitting; see that section.
 
    This is the same shape as the seerr `creates:` incident in `.agent/lessons.md`: a
    check that cannot fail loudly is not a check. **Not fixed here** — failing closed

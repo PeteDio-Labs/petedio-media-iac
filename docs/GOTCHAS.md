@@ -139,42 +139,56 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   update of an image that genuinely needs it — on a different, unthrottled
   registry. Pull only the services the digest check flagged.
 
-## The in-use guards fail open (found 2026-08-13 — OPEN, not fixed)
+## The in-use guards cannot say "I could not tell" (found 2026-08-13)
 
 `roles/media-lifecycle` is what stops `stack-down.yml` killing a live Plex stream
-or an active torrent. **Both guards treat "I could not determine the state" as
-"not in use"** — so a broken credential does not block a stop, it authorizes one.
+or an active torrent. **Neither guard can distinguish "nothing is in use" from "I
+could not tell"** — but they fail in two different ways, and the difference is
+worth knowing before you go looking.
 
-`in-use-plex.yml` is the sharper of the two, because it never checks the status
-code at all:
+**qBittorrent fails open, silently.** `in-use-qbittorrent-vpn.yml`:
 
 ```yaml
 media_in_use: >-
-  {{ ((lifecycle_plex_sessions.content | default('')
-       | regex_search('size="(\d+)"', '\1') | first | default('0')) | int) > 0 }}
+  {{ ((lifecycle_qbit_active.json | default([]) | length) > 0)
+     if (lifecycle_qbit_active.status | default(0)) == 200 else false }}
 ```
 
-With `failed_when: false` on the request, *any* failure — rotated token, 401,
-connection refused, Plex mid-restart — yields empty content → `default('0')` →
-`media_in_use: false`. The role's own comment says stopping Plex mid-stream "kills
-the playback and any in-flight transcode", so the consequence is understood; it is
-the detection that is unsound. `in-use-qbittorrent-vpn.yml` has the same shape,
-guarded slightly better by `if status == 200 else false` — but `false` is still the
-else branch, so a `403` reads as "nothing downloading".
+`false` is the else branch, so the `403` this call actually returns (next section)
+reads as "nothing downloading" and the stop proceeds. Confirmed live.
+
+**Plex does not fail open — it crashes.** An earlier draft of this section claimed
+it did, reasoning that empty content would fall through to `default('0')`. Testing
+it says otherwise. On the ansible-core in use here (2.20.4), `regex_search` with a
+capture group returns **`None`** on no match, and `None | first` raises before
+`default('0')` can apply:
+
+```
+The filter plugin 'ansible.builtin.first' failed: 'NoneType' object is not iterable
+```
+
+Verified against both failure shapes — empty content (unreachable) and a body with
+no `size` attribute (a 401 page). So a broken Plex guard aborts the play rather than
+quietly authorising a stop. Loud, but still not a working guard, and still no way to
+say "in use" when it cannot see. (The rewrite inherited exactly this crash until a
+bogus-port test caught it — `or ['']` between `regex_search` and `first` is the fix.)
 
 **This is live today, and it is not a regression — the qBittorrent guard has never
 worked.** `host_vars/qbittorrent-vpn.yml` sets `qbit_api: "http://localhost:8080"`,
 Ansible's `uri` module runs on the target host, and a host-origin request to that port
 is refused by qBittorrent for the reason in the next section. The guard has been
-getting `Forbidden` since the compose stack was built. **The fail-open default is
-precisely what kept that invisible** — a guard that reported "cannot determine" would
-have surfaced this years earlier.
+getting `Forbidden` since the compose stack was built. **Collapsing "cannot tell"
+into "not in use" is precisely what kept that invisible** — a guard that said
+"cannot determine" out loud would have surfaced this the first time it ran.
 
 The fix is to fail **closed**: an undeterminable state should refuse the stop and
 say why, leaving `-e media_lifecycle_force=true` as the deliberate override — which
-is exactly what that override exists for. It is deliberately **not** applied yet:
-flipping it while qBit auth is broken would immediately start blocking qBittorrent
-stops, and that is an operator's call to make knowingly.
+is exactly what that override exists for.
+
+That fix is **not in this PR**; it is in the follow-up that also repairs the
+qBittorrent reachability, and the order matters. Failing closed while qBit's guard
+still cannot see anything would block every qBittorrent stop from the moment it
+merged — so the reachability fix has to land with it, not after it.
 
 Same family as the seerr `creates:` incident and the `media-base` timezone
 assumption above, and the general rule is the one those earned: **a check that

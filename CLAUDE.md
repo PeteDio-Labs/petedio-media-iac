@@ -97,8 +97,9 @@ dry-run and an apply exercise the same code.
 
 - Every role that asserts a baseline must **measure** it first — the `media-base`
   timezone incident silently converted four hosts.
-- The `media-lifecycle` in-use guards **fail open**: an undeterminable state reads as
-  "not in use", so a stop proceeds. Open bug, not a design.
+- The `media-lifecycle` in-use guards cannot express **"I could not tell"**. qBit's
+  fails open (a `403` reads as "nothing downloading"); Plex's crashes on the same
+  class of failure. Open bug, not a design.
 - **qBittorrent's API is unreachable from LXC 110's own host.** It has no WebUI
   password (the `.env` one is a phantom that only earns hour-long IP bans), and its
   subnet whitelist can't match a host-origin request because Docker SNATs it to the
