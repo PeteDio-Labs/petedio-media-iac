@@ -51,10 +51,15 @@ New work is recorded in PR descriptions until that changes.
    media VMID→role→IP (corrected 2026-06-04). Always `ssh root@192.168.50.10
    'pct list && pct config <id>'` to confirm before editing HCL. Same rule applies
    to this file.
-4. **Secrets in Vault, never in code.** qBittorrent's Proton WireGuard key + qBit
-   password go to a media Vault path (e.g. `kv/services/media/qbittorrent`) read by
-   a media-scoped policy — not committed, not in the shared `ansible` policy. The
-   seed is still pending; `/opt/qbittorrent-vpn/.env` remains unmanaged.
+4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key +
+   addresses** go to `kv/services/media/qbittorrent`, read by a media-scoped policy —
+   not committed, not in the shared `ansible` policy. Seed still pending;
+   `/opt/qbittorrent-vpn/.env` remains unmanaged.
+   Two traps here: `QBIT_WEBUI_PASSWORD` is a **phantom** and must not be seeded
+   (qBittorrent has no WebUI password at all — the subnet whitelist is the auth), and
+   the same secret is documented at **two paths** — `iac`'s seed script already
+   populated `kv/services/qbittorrent`. Resolve before seeding; see
+   `docs/runbooks/qbittorrent-vault-secret.md`.
 
 ## bpg / Proxmox gotchas (carried from petedio-iac — honor verbatim)
 
