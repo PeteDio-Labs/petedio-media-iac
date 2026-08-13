@@ -15,12 +15,12 @@ flowchart TB
 
     subgraph backing["State & secrets"]
         MINIO[("MinIO S3 .221<br/>bucket tfstate<br/>key media/terraform.tfstate")]
-        VAULT[("Vault .223<br/>kv/iac/* — proxmox token, minio creds, lxc-ssh key<br/>kv/services/media/qbittorrent — VPN secret (seed pending)")]
+        VAULT[("Vault .223 — re-seals on every reboot<br/>kv/iac/* — proxmox token, minio creds, lxc-ssh key<br/>kv/services/media/qbittorrent — Proton WG key (SEED PENDING;<br/>currently only in .env on 110)")]
     end
 
     TF -- "backend.tf" --> MINIO
     TF -- "terraform-local AppRole<br/>reads kv/iac/*" --> VAULT
-    ANS -- "ansible AppRole<br/>reads kv/services/media/* (seed pending)" --> VAULT
+    ANS -- "ansible AppRole<br/>reads kv/services/media/* (nothing to read yet)" --> VAULT
     CI --> TF
 
     TF -- "bpg/proxmox API token<br/>https://192.168.50.10:8006" --> PVE
