@@ -10,9 +10,10 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   to make HCL describe reality so `plan` is a clean no-op. Prove zero-drift on
   `plan` BEFORE any `apply`. An apply against drift could mutate or recreate a
   data-heavy media LXC (Plex library, *arr configs) — unacceptable.
-- **Keep the live legacy VMIDs.** A Proxmox VMID is fixed at creation; "renumbering"
-  to the 21x scheme means destroy+recreate. Deferred (PET-49). Import at 100/101/
-  103/104/105/109/110.
+- **Keep the live legacy VMIDs — permanently.** A Proxmox VMID is fixed at creation;
+  "renumbering" to the 21x scheme means destroy+recreate. PET-49 is **Canceled**
+  (2026-07-21), not deferred: 100/101/103/104/105/109/110 are the permanent numbers,
+  and there is no future renumber for a new host to align itself with.
 - **The inventory doc drifted from reality** (corrected 2026-06-04): it mislabeled
   VMID→role→IP and omitted lidarr/seerr/filebrowser. Always `pct list`/`pct config`
   on pve01 before trusting any inventory.
@@ -32,12 +33,15 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `/mnt/media` + `/mnt/downloads` on pve01. Encode each host's actual target path.
 - **Firewall flag:** on for plex, seerr, qbittorrent-vpn; off for the rest.
 
-## qbittorrent-vpn — two states
+## qbittorrent-vpn
 
-- **110 is also managed by the OLD homelab-infra TF.** Capturing it here means two
-  states could manage one container. Before applying anything: `terraform state rm`
-  it from the OLD side (or retire the old stack). Don't touch old state casually —
-  flag and coordinate.
+- **~~110 is also managed by the OLD homelab-infra TF~~ — RESOLVED 2026-08-11.**
+  The dual-state worry (two states managing one container) was verified away rather
+  than assumed away: the `tfstate` bucket holds exactly three objects
+  (`homelab/terraform.tfstate`, `homelab/vault-config.tfstate`,
+  `media/terraform.tfstate`), and `terraform state list` on petedio-iac returns no
+  media VMID in 100-110. There was no old side left to `state rm`. This is what
+  unblocked `MEDIA_APPLY_ENABLED=true`.
 - **VPN secrets go to Vault, not code.** Proton WireGuard key + qBit password →
   `kv/services/media/qbittorrent`. The existing **`ansible`** policy already grants
   `kv/data/services/* read`, so no policy change is needed to consume it — only a
@@ -100,7 +104,11 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   this breaks *both* the digest check and the pull with HTTP 429. Treat an
   unresolvable remote digest as **unknown, never as up-to-date**. compose aborts
   the pull before recreating anything, so the failure is safe — but it must be
-  surfaced. Real fix: point `docker.io` at the homelab Nexus pull-through cache.
+  surfaced. **Fixed 2026-08-11:** all three images now resolve through the homelab
+  Nexus pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
+  defaults), including the `lscr.io` one, which is not Hub-capped but benefits from
+  the same locality. The cache is on-demand — the first pull of a tag still fetches
+  from upstream.
 - **Plex has no in-app updater on Linux server builds** — apt is the mechanism.
   The host also carried a stale second Plex repo (`plex.list` →
   `downloads.plex.tv`, pinned to the 1.42.2 line) alongside the current
@@ -130,3 +138,100 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   pulls everything, so a rate-limited image that is already current aborts the
   update of an image that genuinely needs it — on a different, unthrottled
   registry. Pull only the services the digest check flagged.
+
+## The in-use guards cannot say "I could not tell" (found 2026-08-13)
+
+`roles/media-lifecycle` is what stops `stack-down.yml` killing a live Plex stream
+or an active torrent. **Neither guard can distinguish "nothing is in use" from "I
+could not tell"** — but they fail in two different ways, and the difference is
+worth knowing before you go looking.
+
+**qBittorrent fails open, silently.** `in-use-qbittorrent-vpn.yml`:
+
+```yaml
+media_in_use: >-
+  {{ ((lifecycle_qbit_active.json | default([]) | length) > 0)
+     if (lifecycle_qbit_active.status | default(0)) == 200 else false }}
+```
+
+`false` is the else branch, so the `403` this call actually returns (next section)
+reads as "nothing downloading" and the stop proceeds. Confirmed live.
+
+**Plex does not fail open — it crashes.** An earlier draft of this section claimed
+it did, reasoning that empty content would fall through to `default('0')`. Testing
+it says otherwise. On the ansible-core in use here (2.20.4), `regex_search` with a
+capture group returns **`None`** on no match, and `None | first` raises before
+`default('0')` can apply:
+
+```
+The filter plugin 'ansible.builtin.first' failed: 'NoneType' object is not iterable
+```
+
+Verified against both failure shapes — empty content (unreachable) and a body with
+no `size` attribute (a 401 page). So a broken Plex guard aborts the play rather than
+quietly authorising a stop. Loud, but still not a working guard, and still no way to
+say "in use" when it cannot see. (The rewrite inherited exactly this crash until a
+bogus-port test caught it — `or ['']` between `regex_search` and `first` is the fix.)
+
+**This is live today, and it is not a regression — the qBittorrent guard has never
+worked.** `host_vars/qbittorrent-vpn.yml` sets `qbit_api: "http://localhost:8080"`,
+Ansible's `uri` module runs on the target host, and a host-origin request to that port
+is refused by qBittorrent for the reason in the next section. The guard has been
+getting `Forbidden` since the compose stack was built. **Collapsing "cannot tell"
+into "not in use" is precisely what kept that invisible** — a guard that said
+"cannot determine" out loud would have surfaced this the first time it ran.
+
+The fix is to fail **closed**: an undeterminable state should refuse the stop and
+say why, leaving `-e media_lifecycle_force=true` as the deliberate override — which
+is exactly what that override exists for.
+
+That fix is **not in this PR**; it is in the follow-up that also repairs the
+qBittorrent reachability, and the order matters. Failing closed while qBit's guard
+still cannot see anything would block every qBittorrent stop from the moment it
+merged — so the reachability fix has to land with it, not after it.
+
+Same family as the seerr `creates:` incident and the `media-base` timezone
+assumption above, and the general rule is the one those earned: **a check that
+cannot fail loudly is not a check.** When a guard's whole job is to withhold
+permission, "unknown" must resolve to *no*, never to *yes*.
+
+## qBittorrent's WebUI cannot be reached from LXC 110's own host (found 2026-08-13)
+
+There is **no `WebUI\Password_PBKDF2` and no `WebUI\Username`** in `qBittorrent.conf`.
+qBittorrent has no WebUI password; access control is entirely:
+
+```
+WebUI\AuthSubnetWhitelist=127.0.0.1/32, 192.168.50.0/24
+WebUI\AuthSubnetWhitelistEnabled=true
+```
+
+So `QBIT_WEBUI_PASSWORD` in `/opt/qbittorrent-vpn/.env` is a **phantom credential** —
+nothing matches it, a login with it can never succeed, and five attempts ban the
+source IP for an hour (`WebUI\MaxAuthenticationFailCount`, default 5).
+
+**And the whitelist is unreachable from the host.** qBittorrent shares gluetun's
+netns; the WebUI is published `8080:8080` on the `qbittorrent-vpn_default` bridge
+(gluetun `172.18.0.2`, gateway `172.18.0.1`). A request **originating on LXC 110** to
+`localhost:8080` is SNAT'd to `172.18.0.1` before qBittorrent sees a source address —
+which matches neither whitelist entry. It is refused every time:
+
+```sh
+curl localhost:8080/api/v2/app/version            # -> Forbidden   (always)
+docker exec qbittorrent curl localhost:8080/…     # -> v5.2.3      (always)
+```
+
+Inside the namespace the source genuinely is `127.0.0.1`. That is why the container's
+own healthcheck has read `healthy` throughout — **the healthcheck and anything on the
+host were never testing the same path.**
+
+Two traps this sets:
+
+- **`Forbidden` is ambiguous.** It is the answer for a non-whitelisted source *and*
+  for a banned IP; only `/auth/login` ever says "banned". So a ban and this DNAT
+  problem look identical from the host, and "wait out the ban" (66 minutes of it)
+  proves nothing. Diagnose by comparing the in-namespace path, not by retrying.
+- **Never "fix" this by adding a password or by retrying the login.** The failure is
+  the source address, not the credential. Anything on LXC 110 that needs this API
+  should use `docker exec` (what `scripts/api-capability-probe.sh` does). A LAN-origin
+  request from another host would be covered by `192.168.50.0/24`, since Docker
+  preserves the source IP for non-local traffic — but the host's own loopback is not.

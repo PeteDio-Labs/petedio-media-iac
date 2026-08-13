@@ -85,12 +85,19 @@ later.
 
 ### VMID and IP — a decision, not a default
 
-The captured hosts are the legacy 100–110 block and the renumber to 21x is deferred
-(PET-49). A brand-new host is not captured legacy, so it *can* take a 21x number
-cleanly and set the precedent the renumber eventually wants. The cost is that it sits
-inconsistently beside its neighbours until PET-49 happens. **My call: take the 21x
-number** — a new host is the only chance to get it right for free — but flag it,
-because it makes the inventory temporarily mixed.
+The captured hosts are the legacy 100–110 block. This section originally argued for
+taking a 21x number on the grounds that the renumber was *deferred* and a new host
+could set the precedent it would eventually want.
+
+**That premise is wrong. PET-49 was Canceled on 2026-07-21, not deferred** — so
+100–110 are permanent and there is no future renumber to align with. The argument
+inverts with it: a 21x host would not be "temporarily mixed until PET-49 happens", it
+would be permanently the odd one out, in service of a scheme nothing else will ever
+adopt.
+
+**Revised call: take the next free number in the legacy block.** The only reason to
+prefer 21x was forward-compatibility with a migration that is not going to happen.
+Worth Pedro confirming, since it reverses the earlier recommendation.
 
 ### Gluetun: three options, one recommendation
 
@@ -289,8 +296,9 @@ matching need:
   made it unshippable.
 - **No plugin system, no generic widgets.** The scope fence from the capability review
   holds: it answers "where is this request stuck" and "update the stack."
-- **No auth server of its own.** Wait for PET-31 (Authentik); until then read-only and
-  LAN-bound.
+- **No auth server of its own.** Authentik is the homelab's answer, but nothing is
+  scheduled: PET-31 is Canceled and the Identity & SSO milestone is parked at 0%.
+  Read-only and LAN-bound until that changes.
 - **No Postgres, no Redis, no message queue.** Seven services and a few thousand rows.
 - **No websockets.**
 

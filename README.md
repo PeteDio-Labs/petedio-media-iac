@@ -5,8 +5,14 @@ Terraform + Ansible for the homelab **media stack** — brought under IaC by
 no downtime). Split out from [`petedio-iac`](https://github.com/PeteDio-Labs/petedio-iac)
 so the media stack gets its own state object and its own Vault secret scope.
 
-Part of the PeteDio homelab→AWS platform. Tracker: Linear project **Platform**,
-**Media Stack** milestone (issues `PET-46/47/48/49/53`).
+Part of the PeteDio homelab→AWS platform. Tracker: Linear project **Media Stack**
+(milestone *Brownfield Capture*).
+
+**The capture is complete** — PET-46 (import), PET-47 (Ansible), PET-53 (topology),
+PET-114 and PET-163 (CI) are all Done, the media LXCs are in the cluster resource
+pool (PET-56), and apply-on-merge has been enabled since 2026-08-11. PET-48
+(data-volume documentation) is the one issue still open; PET-49 (renumber to 21x)
+was **canceled**, so the legacy VMIDs are permanent.
 
 ## What's here
 
@@ -26,10 +32,15 @@ ansible/                    # host config + update management (idempotent)
   roles/servarr/            #   ONE role for sonarr/radarr/lidarr/prowlarr
   roles/plex/               #   apt-managed Plex
   roles/seerr/              #   build-from-source seerr
-  roles/qbittorrent-vpn/    #   the gluetun/qbittorrent compose stack
+  roles/qbittorrent-vpn/    #   the gluetun/qbittorrent compose stack (templated)
+  roles/media-lifecycle/    #   in-use guards + ordered stop/start
   playbooks/media-roles.yml #   shared play body (both entry points import it)
+scripts/                    # api-capability-probe.sh — read-only API ground-truthing
 docs/GOTCHAS.md             # media-specific gotchas (+ pointer to petedio-iac's)
-.github/workflows/          # Workflow B — plan-on-PR, apply-on-merge (self-hosted runner)
+docs/ARCHITECTURE.md        # live mapping, with a Mermaid diagram
+docs/DASHBOARD-*.md         # design review for a media triage tool (no code yet)
+docs/runbooks/              # CI Vault-OIDC, qBittorrent Vault secret
+.github/workflows/          # Workflow B — validate-on-PR (hosted), apply-on-merge (self-hosted)
 ```
 
 ## Update management
@@ -90,13 +101,16 @@ databases get corrupted. Run-state is deliberately **not** in Terraform — the
 module keeps `started` in `lifecycle.ignore_changes`, because CI applies on merge
 and an unrelated merge should never boot the stack back up.
 
-**Known limitation — registry rate limits.** Two of the three qbittorrent-vpn
-images come from `docker.io`, which caps anonymous pulls (100/6h per IP);
-`lscr.io` throttles bursts too. When that trips, the digest check reports those
-images as `NOT CHECKED` rather than pretending they are current. Pulls are done
-**per service**, so one throttled-but-current image can't block updating a
-different one that is genuinely stale. The durable fix is pointing `docker.io`
-at the homelab Nexus pull-through cache — not yet wired up.
+**Registry rate limits — fixed 2026-08-11.** Two of the three qbittorrent-vpn
+images come from `docker.io`, which caps anonymous pulls (100/6h per IP); `lscr.io`
+throttles bursts too. All three now resolve through the homelab Nexus pull-through
+cache (`docker.pdlab.dev`, see `qbit_registry` in the role defaults), which removes
+the cap from the normal path. The cache is on-demand, so the first pull of a new tag
+still fetches upstream and can still be throttled — the handling for that stays:
+the digest check reports an unresolvable image as `NOT CHECKED` rather than
+pretending it is current, and pulls are done **per service**, so one
+throttled-but-current image can't block updating a different one that is genuinely
+stale.
 
 **Two things the qbittorrent-vpn role gets right that are easy to get wrong:**
 
@@ -112,15 +126,26 @@ at the homelab Nexus pull-through cache — not yet wired up.
   update deliberately recreates the whole stack, while any other service is
   recreated with `--no-deps` so the VPN tunnel isn't dropped needlessly.
 
-**Not yet templated:** `qbittorrent-vpn`'s `docker-compose.yml` is captured at
-runtime only, not rendered from this repo. Its header still claims it comes from
-`infrastructure/ansible/templates/…` in the retired `homelab-infra` repo (and
-calls the container "LXC 120" — it is 110), so in practice it is unmanaged.
-Templating it means first bringing the Proton WireGuard key and qBit WebUI
-password into this repo's Vault scope; the `.env` holding them is deliberately
-not committed.
+**Templated 2026-08-11.** `qbittorrent-vpn`'s `docker-compose.yml` is now rendered
+from `roles/qbittorrent-vpn/templates/docker-compose.yml.j2`, replacing the
+runtime-only file whose header still credited the retired `homelab-infra` repo (and
+called the container "LXC 120" — it is 110).
 
-## Captured hosts (live VMID/IP — renumber to 21x deferred, PET-49)
+**Still unmanaged: `/opt/qbittorrent-vpn/.env`** (Proton WireGuard key, qBit WebUI
+password) and `port-sync/port-sync.sh`, which the compose file mounts from the host.
+Bringing the `.env` in means first seeding those secrets into this repo's Vault scope
+— see `docs/runbooks/qbittorrent-vault-secret.md`.
+
+> ⚠ **`QBIT_WEBUI_PASSWORD` in that `.env` is a phantom** (found 2026-08-13):
+> qBittorrent has no WebUI password configured at all, so nothing matches it and a
+> login with it can only ever fail — five failures ban the source IP for an hour.
+> Access control is the subnet whitelist, and that whitelist **cannot be reached from
+> LXC 110's own host**: the WebUI is published through Docker, so a host-origin
+> request is SNAT'd to the bridge gateway (`172.18.0.1`) and falls outside it. Use
+> `docker exec qbittorrent curl …` instead. This is why `media-lifecycle`'s
+> qBittorrent in-use guard has never worked — see `docs/GOTCHAS.md`.
+
+## Captured hosts (live VMID/IP — permanent; the 21x renumber was canceled, PET-49)
 
 | Host | VMID | IP | Notes |
 |---|---|---|---|
@@ -130,10 +155,16 @@ not committed.
 | sonarr | 104 | .15 | sdb3-storage |
 | radarr | 105 | .16 | sdb3-storage |
 | prowlarr | 109 | .20 | |
-| qbittorrent-vpn | 110 | .21 | Gluetun/Proton; also in OLD TF — reconcile |
+| qbittorrent-vpn | 110 | .21 | Gluetun/Proton |
 
-**filebrowser (102)** is intentionally excluded — old file/image store, flagged
-for decommission (`PET-82`).
+The old "110 is also in the retired `homelab-infra` TF — reconcile before applying"
+caveat is **resolved** (2026-08-11), and it was verified rather than assumed: the
+`tfstate` bucket holds exactly three objects, and `terraform state list` on
+petedio-iac returns no VMID in 100–110. There was no old side left to `state rm`.
+That is what unblocked `MEDIA_APPLY_ENABLED`.
+
+**filebrowser (102)** was the old file/image store and is **decommissioned** —
+`PET-82` is Done. It is not in this repo and no longer exists on the cluster.
 
 ## How to run (local, Mac on the LAN)
 
@@ -157,8 +188,24 @@ terraform plan          # GOAL: clean no-op (zero drift) → capture proven
 
 ## Conventions
 
-Workflow **B** (GitOps/IaC): `terraform plan` on PR (the review surface),
-`terraform apply` on merge — via the self-hosted runner inside the homelab.
-Branch `pet-<n>-<slug>`, squash-merge, mention `PET-<n>` in the PR. Secrets live
-in **Vault**, never in code. See `docs/GOTCHAS.md` and the petedio-iac repo for
-the carry-forward Terraform/bpg/Ansible gotchas.
+Workflow **B** (GitOps/IaC), **split by trust** — this repo is public and the apply
+runner is self-hosted inside the homelab (PET-163):
+
+| Job | Trigger | Where | Gets |
+|---|---|---|---|
+| `validate` | PR **and** push | GitHub-hosted, ephemeral | `fmt` + `init -backend=false` + `validate`. No Vault, no LAN, no state. |
+| `apply` | push to `main` only | self-hosted, in the homelab | Vault OIDC creds, MinIO state, `plan` → `apply` |
+
+**PRs deliberately do not get a `terraform plan` comment.** A real plan needs the LAN
+backend and the provider credentials that are withheld from PR runs on purpose, so
+the authoritative plan is the operator's local one or the apply-on-merge log. If you
+came here expecting the PR plan to be the review surface: that changed with PET-163.
+
+`apply` is live (`MEDIA_APPLY_ENABLED=true`), so **a squash-merge really does apply**.
+Pushes are filtered with `paths-ignore` so a docs-only merge doesn't mint credentials
+on the homelab runner. Vault (`.223`) comes up **sealed after any reboot** and must be
+unsealed by hand — the apply job preflights that and says so.
+
+Branch `pet-<n>-<slug>`, squash-merge, mention `PET-<n>` in the PR. Secrets live in
+**Vault**, never in code. See `docs/GOTCHAS.md` and the petedio-iac repo for the
+carry-forward Terraform/bpg/Ansible gotchas.
