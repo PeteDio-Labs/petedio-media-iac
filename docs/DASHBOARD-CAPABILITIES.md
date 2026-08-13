@@ -1,6 +1,8 @@
 # Media dashboard — API capability review
 
 **Status:** review only. Nothing is being built yet.
+**Companion:** [DASHBOARD-BACKEND.md](DASHBOARD-BACKEND.md) — how the thing that calls
+these APIs would actually be built (runtime, credentials, collector, storage, deployment).
 **Question asked:** can we get one surface that (1) traces a seerr request through
 Sonarr/Radarr when something goes wrong, (2) shows exact episodes, and (3) updates
 Plex and everything else from a button?
