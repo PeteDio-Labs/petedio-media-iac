@@ -120,53 +120,62 @@
     - media_update_apply | bool
     - (qbit_outdated_images | default([]) | length) > 0
   block:
-    - name: qbit — read WebUI password from .env
-      ansible.builtin.slurp:
-        src: "{{ qbit_env_file }}"
-      register: qbit_env_raw
-      check_mode: false
-      no_log: true
-
-    - name: qbit — extract WebUI password
-      ansible.builtin.set_fact:
-        qbit_password: >-
-          {{ (qbit_env_raw.content | b64decode
-              | regex_search('QBIT_WEBUI_PASSWORD=(.*)', '\1') | first | default('') | trim) }}
-      no_log: true
-
-    - name: qbit — authenticate to the WebUI
-      ansible.builtin.uri:
-        url: "{{ qbit_api }}/api/v2/auth/login"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          username: "{{ qbit_user }}"
-          password: "{{ qbit_password }}"
-        headers:
-          Referer: "{{ qbit_api }}"
-        return_content: true
-        timeout: 15
-      register: qbit_login
+    # Same guard, same fix, same reason as roles/media-lifecycle's — the WebUI is
+    # only reachable from INSIDE the netns. There is no WebUI password (the .env
+    # value matches nothing and five tries earn an hour-long IP ban), and a
+    # host-origin request is SNAT'd to the bridge gateway, outside
+    # WebUI\AuthSubnetWhitelist. See docs/GOTCHAS.md.
+    - name: qbit — is anything in the compose project running?
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, "{{ qbit_dir }}", ps, -q, --status, running]
+      register: qbit_ps
       changed_when: false
       failed_when: false
-      no_log: true
+      check_mode: false
 
-    - name: qbit — count active transfers
-      ansible.builtin.uri:
-        url: "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
-        headers:
-          Cookie: "{{ qbit_login.set_cookie | default('') }}"
-          Referer: "{{ qbit_api }}"
-        return_content: true
-        timeout: 15
+    - name: qbit — count active transfers (in-namespace, no auth needed)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
       register: qbit_active
       changed_when: false
       failed_when: false
-      no_log: true
+      check_mode: false
+      when: (qbit_ps.rc | default(1)) == 0 and (qbit_ps.stdout | default('') | trim) != ''
 
+    # -1 meant "could not determine" here before, which was the right idea —
+    # and then `when: qbit_active_count | int <= 0` let -1 through as permission
+    # to update. Having the third state is worthless unless something acts on it.
+    #
+    # A stopped stack is 0, not -1: nothing can be downloading when nothing is
+    # running, and an update against a down stack is a normal thing to want.
     - name: qbit — resolve active download count
       ansible.builtin.set_fact:
-        qbit_active_count: "{{ (qbit_active.json | default([]) | length) if (qbit_active.status | default(0)) == 200 else -1 }}"
+        qbit_active_count: >-
+          {{ 0
+             if ((qbit_ps.rc | default(1)) == 0 and (qbit_ps.stdout | default('') | trim) == '')
+             else ((qbit_active.stdout | from_json | length)
+                   if ((qbit_active.rc | default(1)) == 0
+                       and (qbit_active.stdout | default('') | trim).startswith('['))
+                   else -1) }}
+
+    - name: qbit — REFUSING to update, transfer state is unknown
+      ansible.builtin.fail:
+        msg: >-
+          Could not read the qBittorrent API (rc={{ qbit_active.rc | default('?') }},
+          answered "{{ (qbit_active.stdout | default('') | trim)[:60] }}{{ (qbit_active.stderr | default('') | trim)[:60] }}").
+          Refusing to update, because "cannot tell" is not "nothing is downloading".
+          Re-run with -e qbit_update_force=true to update anyway.
+      when:
+        - qbit_active_count | int < 0
+        - not (qbit_update_force | bool)
 
     - name: qbit — skip update, downloads in flight
       ansible.builtin.debug:
@@ -194,7 +203,11 @@
       register: qbit_pulls
       changed_when: qbit_pulls.rc == 0
       failed_when: false
-      when: qbit_active_count | int <= 0 or (qbit_update_force | bool)
+      # `== 0`, not `<= 0`. The old `<= 0` is precisely how -1 ("could not
+      # determine") passed for "nothing is downloading, go ahead". -1 without
+      # force has already failed the play above; -1 with force lands on the
+      # second clause, deliberately.
+      when: qbit_active_count | int == 0 or (qbit_update_force | bool)
 
     - name: qbit — note which pulls failed
       ansible.builtin.set_fact:

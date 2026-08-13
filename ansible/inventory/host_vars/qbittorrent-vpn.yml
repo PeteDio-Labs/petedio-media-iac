@@ -15,5 +15,12 @@ media_health_port: 8080
 # downloading?" probe. host_vars beats role defaults — single source for both.
 qbit_dir: /opt/qbittorrent-vpn
 qbit_env_file: /opt/qbittorrent-vpn/.env
+
+# qbit_api is an IN-CONTAINER url. Both the lifecycle guard and the update guard
+# reach it with `docker exec {{ qbit_container }} curl …`, never from the host:
+# the WebUI is published through Docker, so a host-origin request is SNAT'd to
+# the bridge gateway and falls outside WebUI\AuthSubnetWhitelist. In-namespace
+# the source really is 127.0.0.1 and no auth is needed. There is no WebUI
+# password to fall back on — see docs/GOTCHAS.md. Do not point this at the LAN IP.
 qbit_api: "http://localhost:8080"
-qbit_user: admin
+qbit_container: qbittorrent

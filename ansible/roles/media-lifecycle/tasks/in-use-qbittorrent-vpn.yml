@@ -1,49 +1,107 @@
 # Anything downloading? qBittorrent resumes cleanly after a restart, so this is
 # courtesy rather than data safety — but a half-finished download that has to
-# re-verify on resume is still worth avoiding. Password is read from the host's
-# .env at runtime and never logged.
+# re-verify on resume is still worth avoiding.
+#
+# WHY docker exec AND NOT uri: -----------------------------------------------
+# This guard used to log in with QBIT_WEBUI_PASSWORD from the host's .env and
+# then GET qbit_api from the host. Both halves were wrong, and it had never once
+# worked (see docs/GOTCHAS.md § "qBittorrent's WebUI cannot be reached from LXC
+# 110's own host"):
+#
+#   * There is no WebUI password configured at all — no WebUI\Password_PBKDF2 in
+#     qBittorrent.conf. Access control is WebUI\AuthSubnetWhitelist alone, so the
+#     .env value is a phantom: nothing matches it, the login can never succeed,
+#     and five attempts ban the source IP for an hour.
+#   * The whitelist (127.0.0.1/32, 192.168.50.0/24) cannot be reached from this
+#     host. qBittorrent shares gluetun's netns and the WebUI is published
+#     8080:8080 on a bridge, so a host-origin request is SNAT'd to the bridge
+#     gateway (172.18.0.1) before qBittorrent sees a source address. Refused,
+#     every time, with no password to fall back on.
+#
+# Inside the namespace the source genuinely is 127.0.0.1 and the whitelist
+# applies — which is why the container's own healthcheck has been green all
+# along, running this exact request. Do NOT "fix" this by setting a password or
+# retrying the login; the failure was never the credential.
 ---
-- name: qbit — read WebUI password from .env
-  ansible.builtin.slurp:
-    src: "{{ qbit_env_file }}"
-  register: lifecycle_qbit_env
+# Ask the PROJECT what is running, not the named container. "No such container"
+# would otherwise be indistinguishable from "the stack is down" — so a renamed
+# or mistyped qbit_container would read as idle and authorise a stop while the
+# real container was mid-download. Exactly the fail-open shape being fixed here.
+- name: qbit — is anything in the compose project running?
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "{{ qbit_dir }}", ps, -q, --status, running]
+  register: lifecycle_qbit_ps
+  changed_when: false
+  failed_when: false
   check_mode: false
-  no_log: true
 
-- name: qbit — authenticate to the WebUI
-  ansible.builtin.uri:
-    url: "{{ qbit_api }}/api/v2/auth/login"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      username: "{{ qbit_user }}"
-      password: >-
-        {{ (lifecycle_qbit_env.content | b64decode
-            | regex_search('QBIT_WEBUI_PASSWORD=(.*)', '\1') | first | default('') | trim) }}
-    headers:
-      Referer: "{{ qbit_api }}"
-    timeout: 15
-  register: lifecycle_qbit_login
-  changed_when: false
-  failed_when: false
-  no_log: true
-
-- name: qbit — count active downloads
-  ansible.builtin.uri:
-    url: "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
-    headers:
-      Cookie: "{{ lifecycle_qbit_login.set_cookie | default('') }}"
-      Referer: "{{ qbit_api }}"
-    timeout: 15
-  register: lifecycle_qbit_active
-  changed_when: false
-  failed_when: false
-  no_log: true
-
-- name: qbit — record in-use state
+- name: qbit — classify the compose project
   ansible.builtin.set_fact:
-    media_in_use: >-
-      {{ ((lifecycle_qbit_active.json | default([]) | length) > 0)
-         if (lifecycle_qbit_active.status | default(0)) == 200 else false }}
+    lifecycle_qbit_project_up: >-
+      {{ (lifecycle_qbit_ps.rc | default(1)) == 0
+         and (lifecycle_qbit_ps.stdout | default('') | trim) != '' }}
+    lifecycle_qbit_docker_ok: "{{ (lifecycle_qbit_ps.rc | default(1)) == 0 }}"
+
+# Docker itself did not answer. That is not "nothing is downloading".
+- name: qbit — record in-use state (cannot query docker)
+  ansible.builtin.set_fact:
+    media_in_use_state: unknown
     media_in_use_reason: >-
-      {{ (lifecycle_qbit_active.json | default([]) | length) }} torrent(s) downloading
+      could not query the compose project at {{ qbit_dir }}
+      (rc={{ lifecycle_qbit_ps.rc | default('?') }},
+      "{{ (lifecycle_qbit_ps.stderr | default('') | trim)[:80] }}")
+  when: not (lifecycle_qbit_docker_ok | bool)
+
+# Project genuinely down: nothing to guard, and nothing for the stop task to do.
+# This branch is what keeps re-running stack-down.yml idempotent rather than
+# erroring on "unknown" for a service that is legitimately already stopped.
+- name: qbit — record in-use state (compose project not running)
+  ansible.builtin.set_fact:
+    media_in_use_state: idle
+    media_in_use_reason: "the {{ qbit_dir }} compose project has no running services"
+  when:
+    - lifecycle_qbit_docker_ok | bool
+    - not (lifecycle_qbit_project_up | bool)
+
+- name: qbit — probe transfers while the project is up
+  when: lifecycle_qbit_project_up | bool
+  block:
+    - name: qbit — count active downloads (in-namespace, no auth needed)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
+      register: lifecycle_qbit_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # A JSON array is the ONLY answer that counts as having measured anything.
+    # "Forbidden" is a perfectly successful HTTP response as far as curl is
+    # concerned, so rc alone would not catch it — which is precisely how the old
+    # guard read an auth failure as "zero torrents downloading".
+    - name: qbit — did it actually answer with a torrent list?
+      ansible.builtin.set_fact:
+        lifecycle_qbit_ok: >-
+          {{ (lifecycle_qbit_active.rc | default(1)) == 0
+             and (lifecycle_qbit_active.stdout | default('') | trim).startswith('[') }}
+
+    - name: qbit — record in-use state
+      ansible.builtin.set_fact:
+        media_in_use_state: >-
+          {{ ('in-use' if ((lifecycle_qbit_active.stdout | from_json | length) > 0) else 'idle')
+             if (lifecycle_qbit_ok | bool) else 'unknown' }}
+        media_in_use_reason: >-
+          {{ ((lifecycle_qbit_active.stdout | from_json | length) ~ ' torrent(s) downloading')
+             if (lifecycle_qbit_ok | bool)
+             else ('the compose project is up but ' ~ qbit_container ~ ' did not return a torrent list'
+                   ~ ' (rc=' ~ (lifecycle_qbit_active.rc | default('?')) ~ ', answered: "'
+                   ~ ((lifecycle_qbit_active.stdout | default('') | trim)[:60])
+                   ~ ((lifecycle_qbit_active.stderr | default('') | trim)[:60])
+                   ~ '") — that is NOT a confirmation that nothing is downloading') }}
