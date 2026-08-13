@@ -10,9 +10,10 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   to make HCL describe reality so `plan` is a clean no-op. Prove zero-drift on
   `plan` BEFORE any `apply`. An apply against drift could mutate or recreate a
   data-heavy media LXC (Plex library, *arr configs) — unacceptable.
-- **Keep the live legacy VMIDs.** A Proxmox VMID is fixed at creation; "renumbering"
-  to the 21x scheme means destroy+recreate. Deferred (PET-49). Import at 100/101/
-  103/104/105/109/110.
+- **Keep the live legacy VMIDs — permanently.** A Proxmox VMID is fixed at creation;
+  "renumbering" to the 21x scheme means destroy+recreate. PET-49 is **Canceled**
+  (2026-07-21), not deferred: 100/101/103/104/105/109/110 are the permanent numbers,
+  and there is no future renumber for a new host to align itself with.
 - **The inventory doc drifted from reality** (corrected 2026-06-04): it mislabeled
   VMID→role→IP and omitted lidarr/seerr/filebrowser. Always `pct list`/`pct config`
   on pve01 before trusting any inventory.
@@ -32,12 +33,15 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `/mnt/media` + `/mnt/downloads` on pve01. Encode each host's actual target path.
 - **Firewall flag:** on for plex, seerr, qbittorrent-vpn; off for the rest.
 
-## qbittorrent-vpn — two states
+## qbittorrent-vpn
 
-- **110 is also managed by the OLD homelab-infra TF.** Capturing it here means two
-  states could manage one container. Before applying anything: `terraform state rm`
-  it from the OLD side (or retire the old stack). Don't touch old state casually —
-  flag and coordinate.
+- **~~110 is also managed by the OLD homelab-infra TF~~ — RESOLVED 2026-08-11.**
+  The dual-state worry (two states managing one container) was verified away rather
+  than assumed away: the `tfstate` bucket holds exactly three objects
+  (`homelab/terraform.tfstate`, `homelab/vault-config.tfstate`,
+  `media/terraform.tfstate`), and `terraform state list` on petedio-iac returns no
+  media VMID in 100-110. There was no old side left to `state rm`. This is what
+  unblocked `MEDIA_APPLY_ENABLED=true`.
 - **VPN secrets go to Vault, not code.** Proton WireGuard key + qBit password →
   `kv/services/media/qbittorrent`. The existing **`ansible`** policy already grants
   `kv/data/services/* read`, so no policy change is needed to consume it — only a
@@ -100,7 +104,11 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   this breaks *both* the digest check and the pull with HTTP 429. Treat an
   unresolvable remote digest as **unknown, never as up-to-date**. compose aborts
   the pull before recreating anything, so the failure is safe — but it must be
-  surfaced. Real fix: point `docker.io` at the homelab Nexus pull-through cache.
+  surfaced. **Fixed 2026-08-11:** all three images now resolve through the homelab
+  Nexus pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
+  defaults), including the `lscr.io` one, which is not Hub-capped but benefits from
+  the same locality. The cache is on-demand — the first pull of a tag still fetches
+  from upstream.
 - **Plex has no in-app updater on Linux server builds** — apt is the mechanism.
   The host also carried a stale second Plex repo (`plex.list` →
   `downloads.plex.tv`, pinned to the 1.42.2 line) alongside the current
@@ -130,3 +138,41 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   pulls everything, so a rate-limited image that is already current aborts the
   update of an image that genuinely needs it — on a different, unthrottled
   registry. Pull only the services the digest check flagged.
+
+## The in-use guards fail open (found 2026-08-13 — OPEN, not fixed)
+
+`roles/media-lifecycle` is what stops `stack-down.yml` killing a live Plex stream
+or an active torrent. **Both guards treat "I could not determine the state" as
+"not in use"** — so a broken credential does not block a stop, it authorizes one.
+
+`in-use-plex.yml` is the sharper of the two, because it never checks the status
+code at all:
+
+```yaml
+media_in_use: >-
+  {{ ((lifecycle_plex_sessions.content | default('')
+       | regex_search('size="(\d+)"', '\1') | first | default('0')) | int) > 0 }}
+```
+
+With `failed_when: false` on the request, *any* failure — rotated token, 401,
+connection refused, Plex mid-restart — yields empty content → `default('0')` →
+`media_in_use: false`. The role's own comment says stopping Plex mid-stream "kills
+the playback and any in-flight transcode", so the consequence is understood; it is
+the detection that is unsound. `in-use-qbittorrent-vpn.yml` has the same shape,
+guarded slightly better by `if status == 200 else false` — but `false` is still the
+else branch, so a `403` reads as "nothing downloading".
+
+**This is live today.** qBittorrent's WebUI auth is broken (the `.env` password no
+longer authenticates — see [DASHBOARD-CAPABILITIES.md](DASHBOARD-CAPABILITIES.md)
+§ qBittorrent WebUI API), so that guard is currently blind and silently permissive.
+
+The fix is to fail **closed**: an undeterminable state should refuse the stop and
+say why, leaving `-e media_lifecycle_force=true` as the deliberate override — which
+is exactly what that override exists for. It is deliberately **not** applied yet:
+flipping it while qBit auth is broken would immediately start blocking qBittorrent
+stops, and that is an operator's call to make knowingly.
+
+Same family as the seerr `creates:` incident and the `media-base` timezone
+assumption above, and the general rule is the one those earned: **a check that
+cannot fail loudly is not a check.** When a guard's whole job is to withhold
+permission, "unknown" must resolve to *no*, never to *yes*.

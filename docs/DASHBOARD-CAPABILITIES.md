@@ -17,28 +17,45 @@ should not be built as "Mission Control v4". Both points below.
 
 ## Provenance of every claim here
 
-I could not reach the LAN from the session this was written in (`192.168.50.0/24`
-is unroutable from the cloud container), so nothing here was probed live. Each
-claim is tagged:
+This document was written from source, without LAN access (`192.168.50.0/24` is
+unroutable from a cloud container). Each claim is tagged:
 
 | Tag | Means |
 |---|---|
-| **[live]** | This repo's Ansible already calls it against these exact hosts in production — proven |
+| **[live]** | Confirmed against these exact hosts — by this repo's production Ansible, or by the probe run below |
 | **[src]** | Read out of the upstream source for the version we run — accurate, but unverified on our boxes |
 | **[probe]** | Expected, needs confirming |
-
-`scripts/api-capability-probe.sh` turns every **[src]**/**[probe]** into **[live]**.
-It is strictly read-only, runs each `curl` *on* the host over loopback so no API key
-crosses the LAN, and prints response *shapes* rather than payloads:
 
 ```bash
 ./scripts/api-capability-probe.sh -v          # from the Mac, id_ed25519_ansible loaded
 ./scripts/api-capability-probe.sh -o ./probe-out   # keep the raw JSON
 ```
 
-Run that before anyone writes a line of dashboard code. This repo's first golden
-rule is ground-truth-before-docs, and the Linear inventory being wrong about media
-VMIDs is precedent enough.
+### Probe run 2026-08-13 — 32 answered · 6 did not · 3 skipped
+
+All seven hosts reached. **The headline: the join holds.** `externalServiceId` comes
+back populated, so §7 Phase 0 is unblocked and nothing below degrades to title
+matching. Details in §1 and §8.1.
+
+Four things the run changed, each of which had been asserted here and was wrong:
+
+- **Prowlarr has no `/queue`** — it is a hard `404`, not an empty list. §2 claimed
+  Prowlarr shares the *arr queue contract. It does not.
+- **Gluetun's control API auth is per-route, not global.** `/v1/portforward` and
+  `/v1/publicip/ip` answer **unauthenticated**; only `/v1/vpn/status` 401s. The
+  "find the credential before this is usable" blocker in §2 does not apply to the
+  one comparison that matters.
+- **`port-sync` is currently healthy** — gluetun's forwarded port and qBittorrent's
+  `Session\Port` are both `43971`. The failure mode §2 describes is real; it is just
+  not firing today.
+- **qBittorrent's API is not reachable the way this doc assumed**, and finding that
+  out cost an hour-long IP ban. See §2's auth note — it is the one operational
+  problem the run surfaced.
+
+> The probe itself was also broken on first contact: `declare -A` on a bash-3.2 Mac
+> meant it had never run anywhere, and a `jq -R` wrapper was reporting a green YES
+> for the body `Forbidden`. Both fixed. The lesson is the repo's own first golden
+> rule — ground-truth before docs, and *run the thing that does the ground-truthing.*
 
 ---
 
@@ -46,15 +63,15 @@ VMIDs is precedent enough.
 
 ```
 seerr request
-  └─ .media.externalServiceId ──────────► Sonarr seriesId / Radarr movieId   [src]
-       └─ /api/v3/episode?seriesId=…  ──► exact episodes, per-episode hasFile [src]
-       └─ /api/v3/queue .downloadId   ──► torrent infohash                    [src]
+  └─ .media.externalServiceId ──────────► Sonarr seriesId / Radarr movieId   [live]
+       └─ /api/v3/episode?seriesId=…  ──► exact episodes, per-episode hasFile [live]
+       └─ /api/v3/queue .downloadId   ──► torrent infohash                    [live]
             └─ qBittorrent /torrents/info?hashes=…  ──► state, seeds, ETA     [live]
                  ├─ /torrents/trackers?hash=…  ──► WHY it's dead ("unregistered") [probe]
                  ├─ /torrents/files?hash=…     ──► per-episode files in a pack  [probe]
-                 └─ gluetun /v1/portforward    ──► is the tunnel port even right? [probe]
-  └─ .media.ratingKey ──────────────────► Plex /library/metadata/{ratingKey}  [probe]
-  └─ .media.serviceId ──────────────────► which Sonarr/Radarr instance        [src]
+                 └─ gluetun /v1/portforward    ──► is the tunnel port even right? [live]
+  └─ .media.ratingKey ──────────────────► Plex /library/metadata/{ratingKey}  [live]
+  └─ .media.serviceId ──────────────────► which Sonarr/Radarr instance        [live]
 ```
 
 Confirmed on the `seerr-team/seerr` `Media` entity **[src]**: `serviceId`,
@@ -67,9 +84,36 @@ it went to.
 is the infohash — the same value qBittorrent keys on **[src]**. That closes the last
 gap in the chain, request → torrent, with no name matching anywhere.
 
-**If the probe shows `externalServiceId` is null on real requests, this whole design
-changes** and everything below degrades to title/tmdbId matching. That single field
-is the thing to check first.
+### Confirmed live, 2026-08-13 — the design holds
+
+This was the one field the whole thing hung on. It is populated.
+
+A real request, straight out of the probe (178 requests in the instance —
+107 movie / 71 tv, 74 processing, 104 completed):
+
+```json
+{ "id": 174, "status": 5, "type": "movie",
+  "media": { "tmdbId": 49018, "status": 5,
+             "serviceId": 0, "externalServiceId": 118,
+             "externalServiceSlug": "49018", "ratingKey": "4536" } }
+```
+
+`externalServiceId: 118` → Radarr `movieId` 118. `ratingKey: "4536"` → the Plex item.
+`serviceId: 0` → which Radarr instance. Every hop is a stored id.
+
+The other half of the chain is confirmed too — a live Sonarr queue record:
+
+```json
+{ "title": "Big Brother US S28E18 1080p HEVC x265-MeGusta",
+  "trackedDownloadState": "downloading", "downloadClient": "qBittorrent",
+  "downloadId": "521A893713E97755CD09E673525A4372F7202B4B",
+  "indexer": "The Pirate Bay (Prowlarr)", "errorMessage": null }
+```
+
+`downloadId` is a 40-character hex infohash — exactly the key qBittorrent's
+`/torrents/info?hashes=` takes. **Request → torrent is a join, with no title
+matching at any hop.** That was the premise of this document and it is now measured
+rather than assumed.
 
 ## 2. What each API gives us
 
@@ -134,9 +178,16 @@ Radarr is the same shape with `movieIds` / `includeUnknownMovieItems` **[src]**.
 
 ### Lidarr (100 /.14 · `:8686`) and Prowlarr (109 /.20 · `:9696`) — both `/api/v1`
 
-Same auth and the same `system/status`, `health`, `queue`, `update`, `command`
-contract **[live]** for status/update; the media-shaped endpoints differ (albums vs
-episodes). Prowlarr's value to a dashboard is `GET /indexer` — when nothing is being
+Same auth and the same `system/status`, `health`, `update`, `command` contract
+**[live]**; the media-shaped endpoints differ (albums vs episodes).
+
+**`queue` is NOT part of that shared contract.** Lidarr has one; Prowlarr's
+`/api/v1/queue` returns **HTTP 404** **[live]** — it manages indexers, it does not
+run downloads, so it has no queue to expose. An earlier draft of this section listed
+`queue` as common to both. Anything iterating "the four *arrs" for queue rows has to
+skip Prowlarr rather than treat the 404 as an outage.
+
+Prowlarr's value to a dashboard is `GET /indexer` **[live]** — when nothing is being
 found at all, a dead indexer is usually why, and that is currently a fourth tab to go
 check.
 
@@ -162,10 +213,55 @@ sidecar that copies gluetun's NAT-PMP forwarded port into qBit's listen port. Mo
 upstream as a bland `stalledDL` in the Sonarr queue. Getting this integration right is
 most of the diagnostic value of the whole tool.
 
-#### qBittorrent WebUI API (`:8080` · cookie auth)
+#### qBittorrent WebUI API (`:8080`) — auth is not what this repo assumes
 
-Login POST → `SID` cookie, then send it on every call **[live]** — already implemented
-in `roles/media-lifecycle/tasks/in-use-qbittorrent-vpn.yml`.
+Login POST → `SID` cookie is what `roles/media-lifecycle/tasks/in-use-qbittorrent-vpn.yml`
+implements. **That is not how access actually works on 110, and the difference bit us.**
+
+Live config on the host **[live]**:
+
+```
+WebUI\AuthSubnetWhitelist=127.0.0.1/32, 192.168.50.0/24
+WebUI\AuthSubnetWhitelistEnabled=true
+```
+
+On that config a loopback or LAN request should need **no login and no cookie** — the
+whitelist is qBittorrent's documented way to say exactly that. **Read that as the
+intent, not as a measurement:** it has not been observed working, because the host has
+been banned for the entire window in which anyone tried (below). Confirming it is the
+first thing to do once the ban lapses.
+
+What *is* measured: logging in is not free. qBittorrent bans the source IP for an hour
+after `WebUI\MaxAuthenticationFailCount` (default 5) failures, and **a banned IP is
+then refused on every path, whitelist included**.
+
+The probe's first live run logged in once per probe using `QBIT_WEBUI_PASSWORD` from
+`/opt/qbittorrent-vpn/.env`. The password parses (32 chars) but does not authenticate —
+`/auth/login` answers *"Your IP address has been banned after too many failed
+authentication attempts"* — so six probes exhausted the counter and banned
+`127.0.0.1`. Every qBittorrent endpoint has returned `Forbidden` since.
+
+A trap worth recording, because it cost a second round: **a banned host answers
+`Forbidden`, not the ban message.** Only `/auth/login` says "banned". So "retry the
+login unless we look banned" cannot distinguish a first failure from a hundredth, and
+each run silently re-arms the hour it was trying to wait out. The probe therefore no
+longer logs in at all unless asked (`-l`).
+
+**Two things follow, and the second is the one that matters:**
+
+1. Anything reading this API from the host or the LAN should just *not log in* —
+   and should not "helpfully" retry when refused.
+2. **The `.env` password is stale, and that exposed a fail-open bug in the lifecycle
+   guards.** Chased down and confirmed in `roles/media-lifecycle` — see
+   [GOTCHAS.md § "The in-use guards fail open"](GOTCHAS.md). Both guards collapse
+   *"I could not determine whether this is in use"* into *"it is not in use"*, so a
+   broken credential reads as consent to stop the service. `stack-down.yml` against
+   qBittorrent is doing exactly that today.
+
+   This is the same shape as the seerr `creates:` incident in `.agent/lessons.md`: a
+   check that cannot fail loudly is not a check. **Not fixed here** — failing closed
+   changes shutdown behaviour and would start blocking qBittorrent stops immediately
+   (its auth is broken *right now*), so it wants an operator's call, not a drive-by.
 
 | Capability | Endpoint | Tag |
 |---|---|---|
@@ -222,21 +318,33 @@ as `127.0.0.1:8000:8000` **[live]**. So the tunnel can be interrogated directly:
 
 | Capability | Endpoint | Tag |
 |---|---|---|
-| Is the tunnel actually up | `GET /v1/vpn/status` | [probe] |
-| **The forwarded port** (what port-sync is syncing) | `GET /v1/portforward` | [probe] |
-| **Public egress IP** — the leak check, on demand | `GET /v1/publicip/ip` | [probe] |
+| Is the tunnel actually up | `GET /v1/vpn/status` | **401 — needs auth** [live] |
+| **The forwarded port** (what port-sync is syncing) | `GET /v1/portforward` | **open** [live] |
+| **Public egress IP** — the leak check, on demand | `GET /v1/publicip/ip` | **open** [live] |
 | DNS state | `GET /v1/dns/status` | [probe] |
 
-Two constraints, both from our own compose file:
+Two constraints, one of which turned out to be smaller than it looked:
 
 - **It is bound to loopback deliberately** — "not reachable from the LAN". A
   dashboard running anywhere else therefore *cannot* reach it without either
   changing that binding (weakens the current posture) or reading it on-host over
-  SSH the way the probe script does. This is an argument for the Phase 0 CLI, and
-  against a remote web service, at least for the VPN panel.
-- **The control API requires auth** — our own compose comment records that a custom
-  healthcheck against it would 401. Whatever credential `port-sync` uses has to be
-  found before this is usable; it is not in the repo.
+  SSH the way the probe script does. This one stands, and is an argument for the
+  Phase 0 CLI over a remote web service, at least for the VPN panel.
+- **~~The control API requires auth~~ — auth is PER-ROUTE, and the routes that
+  matter are open** **[live]**. The compose comment (a healthcheck would 401) is
+  true of `/v1/vpn/status`, and an earlier draft generalised that to the whole API.
+  It does not hold: `/v1/portforward` and `/v1/publicip/ip` both answer
+  unauthenticated on 110.
+
+  So the highest-value widget in this proposal needs **no credential at all**:
+
+  ```json
+  GET /v1/portforward  →  {"port":43971,"ports":[43971]}
+  GET /v1/publicip/ip  →  {"public_ip":"169.150.226.162","country":"Israel", …}
+  ```
+
+  Finding `port-sync`'s credential is still worth doing for `/v1/vpn/status`, but it
+  is no longer a blocker on the port comparison or the leak check.
 
 This turns the stack-up leak check — currently a once-per-boot assertion in
 `stack-up.yml` — into something continuously observable, which is strictly better.
@@ -253,7 +361,14 @@ incoming connections stop, torrents drift to zero seeds, and Sonarr reports
 A dashboard that shows **gluetun's `/v1/portforward` next to qBit's
 `app/preferences.listen_port`** makes that entire failure class a glance instead of
 an investigation. That single comparison is arguably the highest-value widget in the
-whole proposal, and it costs two GETs.
+whole proposal, and it costs two GETs — **neither of which needs a credential**
+(gluetun's `/v1/portforward` is unauthenticated, and qBit's port is also readable
+straight from `qBittorrent.conf` as `Session\Port`, no API session at all).
+
+**Measured 2026-08-13: healthy.** gluetun reports `{"port":43971}` and
+`qBittorrent.conf` has `Session\Port=43971`. All three containers up 26h. So the
+failure mode above is real but not currently firing — which also means the widget
+has a known-good baseline to have been built against.
 
 (Templating `port-sync.sh` into this repo is a separate, smaller task worth doing on
 its own merits — the README already flags the compose file's unmanaged `.env` as
@@ -315,8 +430,10 @@ What follows from that:
 - The *arr keys are currently generated-and-forgotten in `config.xml`. Reading them
   into Vault is a **capture** task of the same kind as the rest of this repo.
 - Anything with write endpoints exposed needs auth in front of it. Authentik/OIDC is
-  the homelab's answer (PET-31 is parked) — until that exists, keep the tool
-  read-only or LAN-only.
+  the homelab's answer — but there is no live issue to wait on. PET-31 ("Epic D")
+  was **Canceled** when epics became milestones (PET-40); the work now sits in the
+  Platform **Identity & SSO** milestone, which is parked at 0%. Until that moves,
+  keep the tool read-only or LAN-only.
 - The probe script deliberately does *not* centralise anything: it keeps the loopback
   property so that reviewing capabilities costs no new exposure.
 
@@ -396,12 +513,20 @@ single field once the join exists:
 
 ## 8. Open questions
 
-1. **Does `media.externalServiceId` come back populated?** Everything hinges on it.
-   Run the probe.
+1. ~~**Does `media.externalServiceId` come back populated?**~~ **ANSWERED
+   2026-08-13 — yes.** `externalServiceId`, `serviceId` and `ratingKey` are all set
+   on real requests, and `queue.downloadId` is the torrent infohash. The join chain
+   holds end to end; see §1. Phase 0 is unblocked.
+
+   The probe did surface one genuinely new question in its place: **is the
+   qBittorrent WebUI password in `/opt/qbittorrent-vpn/.env` simply stale, or was it
+   never right?** Access works today only because of the subnet whitelist, and the
+   `media-lifecycle` in-use guards depend on that login succeeding.
 2. **Cleanuparr first?** If self-healing queues removes most of the triage, Phase 1
    shrinks to a viewer and Phase 2 may never be needed.
 3. **Read-only for how long?** Write endpoints are what force the auth decision, and
-   PET-31 (Authentik) is parked.
+   the Identity & SSO milestone (Authentik) is parked at 0%, and PET-31 itself is
+   Canceled — so "wait for auth" currently means waiting on nothing scheduled.
 4. **Does the CLI satisfy the actual need?** If `media-trace` answers the question in
    one command from the terminal you already have open, a web UI may be ceremony.
 5. **New LXC, or ride an existing host?** Only worth answering after Phase 0.

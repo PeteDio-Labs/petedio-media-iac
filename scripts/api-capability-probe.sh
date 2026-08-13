@@ -22,6 +22,13 @@
 #   ./scripts/api-capability-probe.sh              # summary: what answered
 #   ./scripts/api-capability-probe.sh -v           # + a shape sample per probe
 #   ./scripts/api-capability-probe.sh -o ./out     # also dump raw JSON per probe
+#   ./scripts/api-capability-probe.sh -l           # ALSO log in to qBittorrent
+#
+# -l is opt-in on purpose. qBittorrent bans the source IP for an hour after 5 failed
+# logins, and a banned IP is refused even on the paths that need no login at all — so
+# a probe that logs in speculatively can lock you out of the thing it is measuring.
+# Reads go over qBittorrent's subnet whitelist by default; use -l only to test the
+# credential itself.
 #
 # Requires: ssh, jq (locally — the LXCs are not assumed to have it).
 #
@@ -33,15 +40,17 @@ set -uo pipefail
 
 VERBOSE=0
 OUTDIR=""
+QB_LOGIN=0
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_ansible}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 
-while getopts "vo:k:h" opt; do
+while getopts "vlo:k:h" opt; do
   case "$opt" in
     v) VERBOSE=1 ;;
+    l) QB_LOGIN=1 ;;
     o) OUTDIR="$OPTARG" ;;
     k) SSH_KEY="$OPTARG" ;;
-    h) sed -n '2,30p' "$0"; exit 0 ;;
+    h) sed -n '2,36p' "$0"; exit 0 ;;
     *) exit 2 ;;
   esac
 done
@@ -246,21 +255,25 @@ NOTES+=("plex: an empty or error 'updater/status' CONFIRMS the apt path is the o
 # whitelist grants. A "strictly read-only" probe that can lock you out of a live
 # service is not read-only.
 #
-# So: try unauthenticated first, and fall back to a login ONLY if the whitelist really is
-# not in play — and never while already banned, where a login attempt cannot succeed and
-# can only feed the counter. Password comes from the host .env, never echoed.
+# So this probe does NOT log in by default. It reads over the whitelist and, if that is
+# refused, says so and stops — rather than reaching for a credential that might be wrong.
+# `-l` opts back in when you actually want to test the login path.
+#
+# Auto-retrying was tried and is a trap: a banned host answers "Forbidden", not "banned"
+# (the ban wording only comes back from /auth/login), so "fall back to a login unless
+# already banned" cannot tell a first failure from a hundredth, and every run quietly
+# refreshes the ban it is trying to avoid. There is no safe way to probe your way out of
+# this; the only safe move is not to knock.
 hr qbittorrent-vpn
-QB_PRE='C=$(mktemp); \
-  V=$(curl -sS --max-time 10 -H "Referer: http://localhost:8080" \
-        http://localhost:8080/api/v2/app/version 2>/dev/null); \
-  case "$V" in \
-    v[0-9]*) : ;; \
-    *banned*) : ;; \
-    *) P=$(sed -n "s/^QBIT_WEBUI_PASSWORD=//p" /opt/qbittorrent-vpn/.env | tr -d "\r"); \
-       curl -sS --max-time 20 -c "$C" -H "Referer: http://localhost:8080" \
-         --data-urlencode "username=admin" --data-urlencode "password=$P" \
-         http://localhost:8080/api/v2/auth/login >/dev/null 2>&1 ;; \
-  esac'
+if [[ "$QB_LOGIN" == 1 ]]; then
+  QB_PRE='C=$(mktemp); \
+    P=$(sed -n "s/^QBIT_WEBUI_PASSWORD=//p" /opt/qbittorrent-vpn/.env | tr -d "\r"); \
+    curl -sS --max-time 20 -c "$C" -H "Referer: http://localhost:8080" \
+      --data-urlencode "username=admin" --data-urlencode "password=$P" \
+      http://localhost:8080/api/v2/auth/login >/dev/null 2>&1'
+else
+  QB_PRE='C=$(mktemp)'
+fi
 QB_GET='curl -sS --max-time 20 -b "$C" -H "Referer: http://localhost:8080"'
 
 QB='http://localhost:8080/api/v2'
@@ -278,7 +291,7 @@ case "$QB_AUTH" in
     ;;
   *)
     printf '  %-34s \033[31mFORBIDDEN / no answer\033[0m\n' "qbittorrent auth"
-    NOTES+=("qBittorrent refused an unauthenticated loopback GET: the subnet whitelist is off, or this IP is banned. The qBit probes below are blocked by auth, not by capability.")
+    NOTES+=("qBittorrent refused an unauthenticated loopback GET, so every qBit probe below is blocked by AUTH, not by a missing capability. Either the subnet whitelist is off or this IP is still banned — and the two are indistinguishable from here, because a banned host answers 'Forbidden' too. Wait out the ban (1h from the last failed login) before concluding the whitelist does not work. Re-run with -l to test the .env credential itself, knowing that a wrong one re-arms the ban.")
     ;;
 esac
 
