@@ -42,12 +42,23 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `media/terraform.tfstate`), and `terraform state list` on petedio-iac returns no
   media VMID in 100-110. There was no old side left to `state rm`. This is what
   unblocked `MEDIA_APPLY_ENABLED=true`.
-- **VPN secrets go to Vault, not code.** Proton WireGuard key + qBit password →
-  `kv/services/media/qbittorrent`. The existing **`ansible`** policy already grants
-  `kv/data/services/* read`, so no policy change is needed to consume it — only a
-  privileged **seed** (Vault admin token; the AppRoles can only read `services/*`).
-  See `docs/runbooks/qbittorrent-vault-secret.md`. Never commit them; never widen a
+- **VPN secrets go to Vault, not code** — but the secret set is smaller than it
+  looks. Only the **Proton WireGuard key + addresses** belong in
+  `kv/services/media/qbittorrent`. `QBIT_WEBUI_PASSWORD` from `.env` must **not** be
+  seeded: qBittorrent has no WebUI password configured at all (0 hits for both
+  `WebUI\Password` and `WebUI\Username` in `qBittorrent.conf`), so it is a phantom
+  that matches nothing and only earns hour-long IP bans. Seeding it would give a
+  non-credential the appearance of a credential.
+  The existing **`ansible`** policy already grants `kv/data/services/* read`, so no
+  policy change is needed to consume it — only a privileged **seed** (Vault admin
+  token; the AppRoles can only read `services/*`). Never commit them; never widen a
   policy beyond `services/*` to reach them.
+- **Two paths exist for this one secret.** `iac/scripts/vault-seed.sh` seeds
+  `kv/services/qbittorrent` (already done, migrated from the retired homelab-infra
+  `qbittorrent.vault.yml`); this repo documents `kv/services/media/qbittorrent`
+  (0 code consumers). Same original source, two names, and both inherit the phantom
+  password. Resolve before seeding — see
+  `docs/runbooks/qbittorrent-vault-secret.md` § "Path collision".
 
 ## Ansible reach into the legacy media LXCs
 
