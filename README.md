@@ -38,8 +38,9 @@ ansible/                    # host config + update management (idempotent)
 scripts/                    # api-capability-probe.sh — read-only API ground-truthing
 docs/GOTCHAS.md             # media-specific gotchas (+ pointer to petedio-iac's)
 docs/ARCHITECTURE.md        # live mapping, with a Mermaid diagram
+docs/data-volumes.md        # where every stateful bit lives + what is NOT backed up (PET-48)
 docs/DASHBOARD-*.md         # design review for a media triage tool (no code yet)
-docs/runbooks/              # CI Vault-OIDC, qBittorrent Vault secret
+docs/runbooks/              # CI Vault-OIDC, qBittorrent Vault secret, seerr upgrade
 .github/workflows/          # Workflow B — validate-on-PR (hosted), apply-on-merge (self-hosted)
 ```
 
