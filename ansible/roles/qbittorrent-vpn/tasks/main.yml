@@ -51,6 +51,150 @@
     project_src: "{{ qbit_dir }}"
     state: present
 
+# ------------------------------------------------------------ speed limits --
+# Runs on every converge, not just on update: this is config state, and the
+# point is to catch a drift nothing else would surface. See PET-297 and the
+# reasoning in defaults/main.yml.
+- name: qbit — converge transfer speed limits
+  when: qbit_speed_limits_enforce | bool
+  block:
+    # Same in-namespace rule as the update block below — the WebUI is only
+    # reachable from inside gluetun's netns, host-origin requests are SNAT'd
+    # outside the whitelist, and there is no password to fall back on.
+    #
+    # Retried because "stack is up" returns as soon as compose is satisfied,
+    # which is before qBittorrent's WebUI is answering.
+    - name: qbit — read speed-limit mode
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - "{{ qbit_api }}/api/v2/transfer/speedLimitsMode"
+      register: qbit_sl_mode
+      until: >-
+        (qbit_sl_mode.rc | default(1)) == 0
+        and (qbit_sl_mode.stdout | default('') | trim) in ['0', '1']
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: qbit — REFUSING to touch speed limits, mode is unreadable
+      ansible.builtin.fail:
+        msg: >-
+          Could not read the qBittorrent speed-limit mode
+          (rc={{ qbit_sl_mode.rc | default('?') }},
+          out "{{ (qbit_sl_mode.stdout | default('') | trim)[:40] }}",
+          err "{{ (qbit_sl_mode.stderr | default('') | trim)[:40] }}").
+          Refusing to guess, because writing a limit blind can throttle the
+          stack rather than fix it. Set -e qbit_speed_limits_enforce=false
+          to skip.
+      when: (qbit_sl_mode.stdout | default('') | trim) not in ['0', '1']
+
+    # qBittorrent has NO "set mode" endpoint — only a toggle. So this has to be
+    # conditional on the mode actually reading 1: a blind toggle is not
+    # idempotent and would flip a correct config into the broken one every run.
+    - name: qbit — switch off alternative speed limits (turtle mode)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - -X
+          - POST
+          - "{{ qbit_api }}/api/v2/transfer/toggleSpeedLimitsMode"
+      when: (qbit_sl_mode.stdout | trim) == '1'
+      changed_when: true
+
+    # Read AFTER the toggle, not before: /transfer/info reports the limits in
+    # force for the CURRENT mode, so reading it while alternative mode was still
+    # on would compare against the wrong profile entirely.
+    - name: qbit — read current transfer limits
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - "{{ qbit_api }}/api/v2/transfer/info"
+      register: qbit_xfer
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: qbit — REFUSING to touch speed limits, transfer state is unreadable
+      ansible.builtin.fail:
+        msg: >-
+          Could not read /transfer/info (rc={{ qbit_xfer.rc | default('?') }}).
+          Refusing to write a limit against unknown state.
+      when: not (qbit_xfer.stdout | default('') | trim).startswith('{')
+
+    - name: qbit — parse transfer state
+      ansible.builtin.set_fact:
+        qbit_xfer_json: "{{ qbit_xfer.stdout | from_json }}"
+
+    - name: qbit — resolve current limits
+      ansible.builtin.set_fact:
+        qbit_dl_now: "{{ qbit_xfer_json.dl_rate_limit | default(-1) | int }}"
+        qbit_up_now: "{{ qbit_xfer_json.up_rate_limit | default(-1) | int }}"
+
+    # Visible in --check, where the command tasks below are skipped rather than
+    # reported. Without this a dry run says nothing about the drift it found.
+    - name: qbit — report speed-limit drift
+      ansible.builtin.debug:
+        msg: >-
+          mode={{ qbit_sl_mode.stdout | trim }}
+          {{ '(alternative — will be switched off)'
+             if (qbit_sl_mode.stdout | trim) == '1' else '(normal)' }},
+          download {{ qbit_dl_now }} -> {{ qbit_dl_limit }},
+          upload {{ qbit_up_now }} -> {{ qbit_up_limit }}
+          (0 = unlimited, values in bytes/sec)
+
+    - name: qbit — set global download limit
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - -d
+          - "limit={{ qbit_dl_limit }}"
+          - "{{ qbit_api }}/api/v2/transfer/setDownloadLimit"
+      when: qbit_dl_now | int != qbit_dl_limit | int
+      changed_when: true
+
+    - name: qbit — set global upload limit
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ qbit_container }}"
+          - curl
+          - -sS
+          - --max-time
+          - "15"
+          - -d
+          - "limit={{ qbit_up_limit }}"
+          - "{{ qbit_api }}/api/v2/transfer/setUploadLimit"
+      when: qbit_up_now | int != qbit_up_limit | int
+      changed_when: true
+
 # ------------------------------------------------------------ version state --
 # `docker compose config --images` is the source of truth for what this stack
 # runs — no hardcoded image list to drift.

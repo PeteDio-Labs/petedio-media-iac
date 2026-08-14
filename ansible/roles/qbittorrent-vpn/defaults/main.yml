@@ -45,3 +45,31 @@ qbit_image_qbittorrent: "{{ qbit_registry }}/lscr-io/linuxserver/qbittorrent:lat
 # so this is a courtesy rather than a data-safety gate — but interrupting an
 # active download is still rude. Override with -e qbit_update_force=true.
 qbit_update_force: false
+
+# --------------------------------------------------------- speed limits ------
+# qBittorrent keeps TWO limit profiles — "normal" and "alternative" — and a
+# global switch between them (the turtle button in the WebUI). The switch is
+# plain runtime state: nothing here ever asserted it, so a single stray click
+# survived indefinitely.
+#
+# That is exactly what happened on 2026-08-14 (PET-297). The stack was found in
+# alternative mode with the scheduler DISABLED — so not a time-of-day rule, just
+# a turtle left on — capping upload at 10 KB/s. BitTorrent peers reciprocate on
+# what you upload, so throttling upload throttles DOWNLOAD too: clearing it took
+# the active torrent from 4.85 to 6.5 MiB/s, about +34%.
+#
+# The reason this is worth converging rather than fixing by hand is the symptom.
+# "Downloads are slow" reads as a VPN problem or a bad swarm; it took measuring
+# throughput against the tunnel directly to find a config toggle. Assert it, and
+# the next occurrence is a diff instead of an afternoon.
+qbit_speed_limits_enforce: true
+
+# 0 = unlimited, otherwise BYTES per second (the API is bytes, not KiB).
+#
+# Upload is deliberately unlimited. Do not "helpfully" cap it: the reciprocity
+# effect above means a low upload ceiling costs download throughput, which is
+# the trap this whole block exists to prevent. Sustained upload is already
+# bounded elsewhere — share limits stop seeding at ratio 0 / 1 minute, so this
+# only governs the upload that happens *while* fetching.
+qbit_dl_limit: 0
+qbit_up_limit: 0
