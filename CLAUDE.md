@@ -7,9 +7,10 @@ state object (`media/terraform.tfstate`) and its own Vault secret scope.
 
 > Part of the PeteDio homelab→AWS platform. The parent workspace
 > (`petedio-workspace`) holds the cross-repo context; the canonical infra
-> reference is the Linear **"Homelab Inventory & IP/VMID Scheme"** doc.
-> Tracker: Linear project **Media Stack** (its own project, not a Platform
-> milestone), milestone **Brownfield Capture**.
+> reference is **`vault/Hosts/hosts-inventory.md`**.
+> Tracker: **Plane** (workspace `petedio`, project `PET`). ⚠ **Linear was retired
+> 2026-08-13** — read-only history, do not write to it, and its inventory doc is
+> stranded and drifting. Prefer the vault for anything it used to answer.
 
 ## The vault is the knowledge base — read it before planning
 
@@ -17,7 +18,7 @@ Operational substance for this stack lives in the **`petedio-vault`** repo
 (private, `PeteDio-Labs/petedio-vault`, cloned at `~/petedio/vault`), an
 Obsidian-readable markdown vault. **This repo holds the code; the vault holds why
 it is that way and what broke.** Order of authority is
-**live infra > the vault > Linear** — `pct list` wins over any document, this
+**live infra > the vault > Plane** — `pct list` wins over any document, this
 file included.
 
 Start here for media work:
@@ -43,7 +44,7 @@ filename-only `[[wikilinks]]`, frontmatter with a `verified:` date, and
 `./scripts/audit.sh` must pass before you finish. Obsidian Git auto-commits and
 **pushes every 10 minutes**, so never leave it half-edited.
 
-## Where the work stands (Linear, verified 2026-08-13)
+## Where the work stands (Linear-era record, verified 2026-08-13)
 
 The capture is **done**. Terraform and Ansible both describe live reality, and
 apply-on-merge is on.
@@ -66,8 +67,10 @@ resource pool, `pool.tf`) and **PET-82** (filebrowser 102 decommissioned).
 2026-07-14 and long superseded by the merged #4–#7. Read it before trusting it;
 it wants closing or rebasing, not merging.
 
-⚠ **New Linear issues cannot be minted** — the workspace is at its free plan cap.
-New work is recorded in PR descriptions until that changes.
+The `PET-<n>` numbers above are **Linear-era** and resolve only in that retired,
+read-only workspace. Tracking moved to **Plane** on 2026-08-13; the four issues
+open at cutover were deliberately not migrated. The old free-plan cap that forced
+new work into PR descriptions no longer applies — file it in Plane instead.
 
 ## Golden rules (this repo)
 
@@ -79,10 +82,11 @@ New work is recorded in PR descriptions until that changes.
 2. **VMIDs are the live legacy numbers** (100/101/103/104/105/109/110) and they are
    **permanent**. PET-49 is Canceled, not deferred — there is no future renumber, so
    don't design anything (new hosts included) around a 21x scheme arriving later.
-3. **Ground-truth before you trust docs.** The Linear inventory doc was wrong about
-   media VMID→role→IP (corrected 2026-06-04). Always `ssh root@192.168.50.10
-   'pct list && pct config <id>'` to confirm before editing HCL. Same rule applies
-   to this file.
+3. **Ground-truth before you trust docs.** The old Linear inventory doc was wrong
+   about media VMID→role→IP (corrected 2026-06-04); it is now stranded in the
+   retired workspace and drifting further, so prefer `vault/Hosts/hosts-inventory.md`.
+   Always `ssh root@192.168.50.10 'pct list && pct config <id>'` to confirm before
+   editing HCL. Same rule applies to this file.
 4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key +
    addresses** go to `kv/services/media/qbittorrent`, read by a media-scoped policy —
    not committed, not in the shared `ansible` policy. Seed still pending;
@@ -180,4 +184,5 @@ saying so; CI cannot fix it.
 ## Workflow
 
 Branch `pet-<n>-<slug>` → PR → **squash-merge** (which applies). Mention `PET-<n>`
-in the PR. Keep the Linear issue updated as work proceeds. Pedro is the only merger.
+in the PR. Keep the **Plane** work item updated as work proceeds — Linear is
+retired and must not be written to. Pedro is the only merger.
