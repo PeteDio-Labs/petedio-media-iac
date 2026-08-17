@@ -11,6 +11,38 @@ state object (`media/terraform.tfstate`) and its own Vault secret scope.
 > Tracker: Linear project **Media Stack** (its own project, not a Platform
 > milestone), milestone **Brownfield Capture**.
 
+## The vault is the knowledge base — read it before planning
+
+Operational substance for this stack lives in the **`petedio-vault`** repo
+(private, `PeteDio-Labs/petedio-vault`, cloned at `~/petedio/vault`), an
+Obsidian-readable markdown vault. **This repo holds the code; the vault holds why
+it is that way and what broke.** Order of authority is
+**live infra > the vault > Linear** — `pct list` wins over any document, this
+file included.
+
+Start here for media work:
+
+| Note | What it saves you |
+|---|---|
+| `Systems/media-stack.md` | The stack overview, and the corrected VMID→role→IP truth |
+| `Hosts/hosts-inventory.md` | Ground-truthed host table; per-host notes are `Hosts/<vmid>-<name>.md` |
+| `Practices/downloads-and-torrents.md` | The 196 GiB staging volume, why a full `/downloads` deadlocks rather than drains, share limits, replacing a bad library copy |
+| `Practices/indexers-and-fake-releases.md` | Fake `.exe` releases, why title filtering cannot catch them, and the indexer-coverage failure that followed |
+| `Practices/ssh-keys-two-hops.md` | Which key gets you where |
+
+⚠ **A large amount of live media behaviour is configured through app APIs and
+exists nowhere in git** — Prowlarr's indexer set (enable/disable, priority,
+minimum seeders), qBittorrent's share limits and `preallocate_all`, Sonarr's
+quality profiles, the VPN exit country. Ansible does **not** manage any of it.
+This is a real drift class: a rebuild silently restores old behaviour, and the
+only record that a setting was ever chosen deliberately is the vault note. When
+you change one of these live, write it down there — nothing else will.
+
+Vault conventions (its own `CLAUDE.md` governs): globally-unique note names,
+filename-only `[[wikilinks]]`, frontmatter with a `verified:` date, and
+`./scripts/audit.sh` must pass before you finish. Obsidian Git auto-commits and
+**pushes every 10 minutes**, so never leave it half-edited.
+
 ## Where the work stands (Linear, verified 2026-08-13)
 
 The capture is **done**. Terraform and Ansible both describe live reality, and
