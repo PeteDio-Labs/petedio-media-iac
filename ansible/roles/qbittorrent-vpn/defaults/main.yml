@@ -92,6 +92,25 @@ qbit_up_limit: 0
 # servers against Switzerland's 18 — and port forwarding is what sustains the
 # peer count, so the small pool is its own risk.
 #
+# Applied and measured 2026-08-18, same method as the pre-change numbers above
+# (Hetzner Ashburn 100MB.bin, single stream, 3 samples):
+#
+#   path                 before (Israel)   after (Switzerland)
+#   through the tunnel   3.97 MB/s         12.81 MB/s      +223%
+#   direct, no VPN       5.88 MB/s          6.56 MB/s       +12%
+#   tunnel latency       178 ms            145 ms
+#   tunnel penalty       +75 ms            +77 ms
+#
+# Two things that matter more than the headline. **The tunnel is now about twice
+# as fast as the direct path**, where it used to be a third slower — and the
+# latency penalty is unchanged, so the Swiss exit is not closer, it is better
+# peered. The bottleneck was the ISP's own route to Ashburn, not the VPN.
+#
+# And the direct path improved 12% on its own with no config change, so some of
+# the gain is background conditions rather than the exit. Only the 223% is
+# attributable here. Torrent throughput is swarm-dependent and will not mirror a
+# single-endpoint HTTP test — treat this as the ceiling moving, not a promise.
+#
 # Whatever you set here MUST be a country with port-forwarding servers, or
 # VPN_PORT_FORWARDING silently gets you nothing and swarm connectivity degrades.
 # Confirmed port-forward pools: US 182, Canada 28, UK 32, France 26, Germany 20,
