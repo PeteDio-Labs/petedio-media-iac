@@ -186,3 +186,24 @@ saying so; CI cannot fix it.
 Branch `pet-<n>-<slug>` → PR → **squash-merge** (which applies). Mention `PET-<n>`
 in the PR. Keep the **Plane** work item updated as work proceeds — Linear is
 retired and must not be written to. Pedro is the only merger.
+
+## Writing style
+
+Write in **Google developer documentation style** — the standing default for prose
+in this repo: PR descriptions, commit bodies, work-item comments, docs, and code
+comments.
+
+- **Second person.** The reader is *you*; use *I* for yourself, never *we* for the reader.
+- **Active voice.** Name who does the thing.
+- **Conditions before instructions:** *To rebuild the index, run X* — not *Run X if
+  you want to rebuild the index.*
+- **Answer first**, detail after.
+- **Cut filler:** *just*, *simply*, *easy*, *please note*, *in order to*. Never call
+  something easy.
+- **No time-anchored words** in durable prose: *currently*, *new*, *now*, *latest*,
+  *existing*.
+- **Sentence case** headings; code font for paths, commands, flags, and `PET-<n>` keys.
+- Sentences under 26 words. Write *lets you* not *allows you to*, *run* not *execute*.
+
+This governs how sentences are written, not how many. Don't restyle prose you aren't
+already editing.
