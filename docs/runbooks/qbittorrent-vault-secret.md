@@ -17,7 +17,7 @@ this repo or in `ansible-vault`.
 | `PROTON_WG_PRIVATE_KEY` | **yes** | The real one. Gluetun's WireGuard identity. |
 | `PROTON_WG_ADDRESSES` | **yes-ish** | Tunnel address; not a credential but pairs with the key and is not public. |
 | `PROTON_SERVER_COUNTRIES` | no | Plain config. Belongs in the role's defaults, not Vault. |
-| `QBIT_WEBUI_PASSWORD` | **no — it is a phantom** | See below. |
+| `QBIT_WEBUI_PASSWORD` | **no — it is a phantom** | See § `QBIT_WEBUI_PASSWORD` must NOT be seeded. |
 
 ### `QBIT_WEBUI_PASSWORD` must NOT be seeded
 
@@ -40,8 +40,8 @@ password. See `docs/GOTCHAS.md` § "qBittorrent's WebUI cannot be reached from L
 **Seeding it into Vault would give a non-credential the appearance of a credential**
 and guarantee the next person wires up a login that cannot work. Anything on 110 that
 needs the API should use `docker exec qbittorrent curl …`, which is in-namespace and
-therefore whitelisted — that is what `roles/media-lifecycle` and
-`scripts/api-capability-probe.sh` now do.
+therefore allowlisted — that is what `roles/media-lifecycle` and
+`scripts/api-capability-probe.sh` do.
 
 If a real WebUI password is ever wanted, that is a **deliberate config change** to
 qBittorrent (set `WebUI\Password_PBKDF2`), and only then is there something worth
@@ -70,7 +70,7 @@ That settles it, and the answer is better than "pick one":
 **Actions:**
 
 1. Seed `kv/services/media/qbittorrent` with the Proton key + addresses (below).
-   Source them from the live `.env` on 110; that is currently the only copy, which
+   Source them from the live `.env` on 110; that is the only copy, which
    is its own reason to get this done.
 2. Delete `kv/services/qbittorrent` — it holds only the dead credential.
 3. Drop the qBittorrent block from `iac/scripts/vault-seed.sh` (and `vault-verify.sh`)
@@ -104,7 +104,7 @@ vault kv put kv/services/media/qbittorrent \
   wireguard_addresses='...'
 ```
 
-Note the absence of `qbit_password`. That is deliberate — see above.
+Note the absence of `qbit_password`. That is deliberate — see § `QBIT_WEBUI_PASSWORD` must NOT be seeded.
 
 ## Consume
 

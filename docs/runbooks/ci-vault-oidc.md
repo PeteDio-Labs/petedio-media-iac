@@ -1,7 +1,7 @@
 # Runbook — media CI ↔ Vault (OIDC)
 
 **Status: DONE and live.** This was written as a migration checklist while the wiring
-was still pending; every step in it has since landed. It is now a **reference for how
+was still pending; every step in it has since landed. It is a **reference for how
 CI gets credentials, and what to do when it stops working** — verified against live
 Vault 2026-08-13.
 

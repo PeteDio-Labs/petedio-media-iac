@@ -58,7 +58,7 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `username` + `password` and **nothing else** — i.e. only the phantom credential,
   no Proton key. `kv/services/media/qbittorrent` is **empty**. So the real secret,
   the Proton WireGuard key, has never been in Vault at all: it lives only in
-  `/opt/qbittorrent-vpn/.env` on 110, which is currently its sole copy. Seed the
+  `/opt/qbittorrent-vpn/.env` on 110, which is its sole copy. Seed the
   Proton key at the `services/media/*` path, delete `kv/services/qbittorrent`, and
   drop its block from `iac`'s seed script or it will keep being recreated. See
   `docs/runbooks/qbittorrent-vault-secret.md`.
@@ -100,12 +100,12 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   file size above sqlite's 4096-byte empty page) and gate destructive cleanup on
   that assertion — not on a liveness probe.
 - **Take the cheap backup even when the design "can't lose data."** The ~500KB
-  pre-swap config tarball is the only reason the above was a 4-minute recovery.
+  pre-swap config tarball is the only reason the seerr swap was a 4-minute recovery.
 - **`media-base` asserted a timezone it never measured.** It set `Etc/UTC`
   claiming it "matches the running media hosts"; in fact lidarr/sonarr/radarr/
   seerr run `America/Chicago`. Because the role had only ever run
   `--limit prowlarr`, the mismatch was invisible until the first stack-wide run
-  repointed `/etc/localtime` on four hosts. Per-host reality now lives in
+  repointed `/etc/localtime` on four hosts. Per-host reality lives in
   `host_vars/`, and the role default is inert (empty = don't manage). **A
   `--limit`-scoped role hides its wrong assumptions indefinitely.**
 - **`changed=N` on a supposedly read-only run is a defect report** — chase it
@@ -205,7 +205,7 @@ still cannot see anything would block every qBittorrent stop from the moment it
 merged — so the reachability fix has to land with it, not after it.
 
 Same family as the seerr `creates:` incident and the `media-base` timezone
-assumption above, and the general rule is the one those earned: **a check that
+assumption, and the general rule is the one those earned: **a check that
 cannot fail loudly is not a check.** When a guard's whole job is to withhold
 permission, "unknown" must resolve to *no*, never to *yes*.
 
@@ -223,11 +223,11 @@ So `QBIT_WEBUI_PASSWORD` in `/opt/qbittorrent-vpn/.env` is a **phantom credentia
 nothing matches it, a login with it can never succeed, and five attempts ban the
 source IP for an hour (`WebUI\MaxAuthenticationFailCount`, default 5).
 
-**And the whitelist is unreachable from the host.** qBittorrent shares gluetun's
+**And the allowlist is unreachable from the host.** qBittorrent shares gluetun's
 netns; the WebUI is published `8080:8080` on the `qbittorrent-vpn_default` bridge
 (gluetun `172.18.0.2`, gateway `172.18.0.1`). A request **originating on LXC 110** to
 `localhost:8080` is SNAT'd to `172.18.0.1` before qBittorrent sees a source address —
-which matches neither whitelist entry. It is refused every time:
+which matches neither allowlist entry. It is refused every time:
 
 ```sh
 curl localhost:8080/api/v2/app/version            # -> Forbidden   (always)
@@ -240,7 +240,7 @@ host were never testing the same path.**
 
 Two traps this sets:
 
-- **`Forbidden` is ambiguous.** It is the answer for a non-whitelisted source *and*
+- **`Forbidden` is ambiguous.** It is the answer for a non-allowlisted source *and*
   for a banned IP; only `/auth/login` ever says "banned". So a ban and this DNAT
   problem look identical from the host, and "wait out the ban" (66 minutes of it)
   proves nothing. Diagnose by comparing the in-namespace path, not by retrying.

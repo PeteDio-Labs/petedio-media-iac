@@ -87,7 +87,7 @@ later.
 
 The captured hosts are the legacy 100–110 block. This section originally argued for
 taking a 21x number on the grounds that the renumber was *deferred* and a new host
-could set the precedent it would eventually want.
+could set the precedent it would want.
 
 **That premise is wrong. PET-49 was Canceled on 2026-07-21, not deferred** — so
 100–110 are permanent and there is no future renumber to align with. The argument
@@ -106,8 +106,8 @@ proposal, and it is behind a loopback binding:
 
 | Option | Cost |
 |---|---|
-| **(a) Rebind the control port to the LXC's LAN IP, keep auth** | One line in `docker-compose.yml.j2` — now templated in-repo, so it is a reviewable diff. The API already requires auth and the Proxmox firewall on 110 is already on. **Recommended.** |
-| (b) Backend SSHes to 110 and curls loopback | Works, but the backend now holds an SSH key into a container — a strictly larger credential than the HTTP one it was avoiding |
+| **(a) Rebind the control port to the LXC's LAN IP, keep auth** | One line in `docker-compose.yml.j2` — templated in-repo, so it is a reviewable diff. The API already requires auth and the Proxmox firewall on 110 is already on. **Recommended.** |
+| (b) Backend SSHes to 110 and curls loopback | Works, but the backend holds an SSH key into a container — a strictly larger credential than the HTTP one it was avoiding |
 | (c) VPN panel is CLI-only | Free, but drops the best signal from the surface that is meant to show it |
 
 (a) is a deliberate posture change and should be reviewed as one. It is not a silent

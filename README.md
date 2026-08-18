@@ -104,7 +104,7 @@ and an unrelated merge should never boot the stack back up.
 
 **Registry rate limits — fixed 2026-08-11.** Two of the three qbittorrent-vpn
 images come from `docker.io`, which caps anonymous pulls (100/6h per IP); `lscr.io`
-throttles bursts too. All three now resolve through the homelab Nexus pull-through
+throttles bursts too. All three resolve through the homelab Nexus pull-through
 cache (`docker.pdlab.dev`, see `qbit_registry` in the role defaults), which removes
 the cap from the normal path. The cache is on-demand, so the first pull of a new tag
 still fetches upstream and can still be throttled — the handling for that stays:
@@ -140,7 +140,7 @@ Bringing the `.env` in means first seeding those secrets into this repo's Vault 
 > ⚠ **`QBIT_WEBUI_PASSWORD` in that `.env` is a phantom** (found 2026-08-13):
 > qBittorrent has no WebUI password configured at all, so nothing matches it and a
 > login with it can only ever fail — five failures ban the source IP for an hour.
-> Access control is the subnet whitelist, and that whitelist **cannot be reached from
+> Access control is the subnet allowlist, and that allowlist **cannot be reached from
 > LXC 110's own host**: the WebUI is published through Docker, so a host-origin
 > request is SNAT'd to the bridge gateway (`172.18.0.1`) and falls outside it. Use
 > `docker exec qbittorrent curl …` instead. This is why `media-lifecycle`'s

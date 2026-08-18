@@ -92,7 +92,7 @@ new work into PR descriptions no longer applies — file it in Plane instead.
    not committed, not in the shared `ansible` policy. Seed still pending;
    `/opt/qbittorrent-vpn/.env` remains unmanaged.
    Two traps here: `QBIT_WEBUI_PASSWORD` is a **phantom** and must not be seeded
-   (qBittorrent has no WebUI password at all — the subnet whitelist is the auth), and
+   (qBittorrent has no WebUI password at all — the subnet allowlist is the auth), and
    the same secret is documented at **two paths** — `iac`'s seed script already
    populated `kv/services/qbittorrent`. Resolve before seeding; see
    `docs/runbooks/qbittorrent-vault-secret.md`.
@@ -125,7 +125,7 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
 sonarr/radarr/lidarr/prowlarr) · `plex` (apt) · `seerr` (build from source) ·
-`qbittorrent-vpn` (gluetun/qbit compose, **now templated in-repo**, all images
+`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, all images
 pulled through the `docker.pdlab.dev` Nexus cache) · `media-lifecycle` (in-use
 guards + ordered stop/start).
 
@@ -143,7 +143,7 @@ dry-run and an apply exercise the same code.
   class of failure. Open bug, not a design.
 - **qBittorrent's API is unreachable from LXC 110's own host.** It has no WebUI
   password (the `.env` one is a phantom that only earns hour-long IP bans), and its
-  subnet whitelist can't match a host-origin request because Docker SNATs it to the
+  subnet allowlist can't match a host-origin request because Docker SNATs it to the
   bridge gateway. Use `docker exec qbittorrent curl …`. This is why the qBittorrent
   in-use guard has never worked.
 
