@@ -107,7 +107,7 @@
           - exec
           - "{{ qbit_container }}"
           - curl
-          - -sS
+          - -fsS
           - --max-time
           - "15"
           - -X
@@ -170,7 +170,7 @@
           - exec
           - "{{ qbit_container }}"
           - curl
-          - -sS
+          - -fsS
           - --max-time
           - "15"
           - -d
@@ -186,7 +186,7 @@
           - exec
           - "{{ qbit_container }}"
           - curl
-          - -sS
+          - -fsS
           - --max-time
           - "15"
           - -d
