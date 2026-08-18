@@ -73,3 +73,27 @@ qbit_speed_limits_enforce: true
 # only governs the upload that happens *while* fetching.
 qbit_dl_limit: 0
 qbit_up_limit: 0
+
+# ------------------------------------------------------------- vpn exit ------
+# Country gluetun picks its exit server in. The Proton WireGuard key works with
+# any Proton server, so changing this needs no new key and no .conf regeneration
+# — but it does mean recreating gluetun, and qbittorrent shares its network
+# namespace (see tasks/main.yml). Never change it with a torrent mid-flight.
+#
+# This lived only in the host's uncommitted .env until PET-295, which meant the
+# real exit country existed nowhere in git. It is not a secret — it belongs here
+# next to the other plain settings, the way FIREWALL_OUTBOUND_SUBNETS and TZ are
+# literals in the compose template.
+#
+# Switzerland, not Israel. Israel was never chosen for privacy or speed; it was
+# just the country the original .conf happened to be generated for, and it cost
+# roughly a third of throughput from a US connection (3.97 MB/s through the
+# tunnel vs 5.88 MB/s direct, +75 ms). It also has only 4 port-forward-capable
+# servers against Switzerland's 18 — and port forwarding is what sustains the
+# peer count, so the small pool is its own risk.
+#
+# Whatever you set here MUST be a country with port-forwarding servers, or
+# VPN_PORT_FORWARDING silently gets you nothing and swarm connectivity degrades.
+# Confirmed port-forward pools: US 182, Canada 28, UK 32, France 26, Germany 20,
+# Switzerland 18, Romania/Sweden 14, Netherlands/Poland/Singapore/Spain 12.
+proton_server_countries: Switzerland

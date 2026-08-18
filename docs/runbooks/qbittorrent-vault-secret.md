@@ -16,7 +16,7 @@ this repo or in `ansible-vault`.
 |---|---|---|
 | `PROTON_WG_PRIVATE_KEY` | **yes** | The real one. Gluetun's WireGuard identity. |
 | `PROTON_WG_ADDRESSES` | **yes-ish** | Tunnel address; not a credential but pairs with the key and is not public. |
-| `PROTON_SERVER_COUNTRIES` | no | Plain config. Belongs in the role's defaults, not Vault. |
+| `PROTON_SERVER_COUNTRIES` | no | Plain config. **Moved to the role's defaults as `proton_server_countries` (PET-295)** — the compose template no longer reads it from `.env`. The key may still be present on the host; it is now inert. |
 | `QBIT_WEBUI_PASSWORD` | **no — it is a phantom** | See § `QBIT_WEBUI_PASSWORD` must NOT be seeded. |
 
 ### `QBIT_WEBUI_PASSWORD` must NOT be seeded

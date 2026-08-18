@@ -36,6 +36,29 @@
     force: false
     mode: "0644"
 
+# ------------------------------------------------------- RESTART HAZARD -----
+# These two tasks recreate gluetun whenever the rendered compose file changes,
+# and qbittorrent + port-sync share gluetun's network namespace
+# (`network_mode: "service:gluetun"`). Recreating gluetun therefore destroys the
+# namespace and restarts qBittorrent with it: the tunnel drops, in-flight
+# torrents stop, and a partially-written piece gets rechecked on resume.
+#
+# The in-flight-download guard (`qbit_active_count` / `qbit_update_force`) lives
+# inside the update block further down. It does NOT cover these two tasks. Any
+# change to gluetun's environment — the exit country (`proton_server_countries`,
+# PET-295), the image tag, a port — takes effect on the next converge, guarded by
+# nothing.
+#
+# The trap: `ansible/playbooks/check-updates.yml` bills itself as "read-only,
+# changes nothing, safe to run any time, including on a schedule" and imports
+# this same role body. It is only read-only while the rendered compose file
+# matches the running stack.
+#
+# So: after changing anything gluetun reads, converge deliberately with the
+# stack idle. Check first, from the host:
+#     docker exec qbittorrent curl -fsS \
+#       'http://localhost:8080/api/v2/torrents/info?filter=downloading'
+# An empty list means the restart is free.
 - name: qbit — render the compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2

@@ -33,7 +33,10 @@ services:
       VPN_TYPE: wireguard
       WIREGUARD_PRIVATE_KEY: ${PROTON_WG_PRIVATE_KEY}
       WIREGUARD_ADDRESSES: ${PROTON_WG_ADDRESSES}
-      SERVER_COUNTRIES: ${PROTON_SERVER_COUNTRIES}
+      # Not a secret, so it comes from the role's defaults rather than the
+      # uncommitted .env — see proton_server_countries there for why the exit
+      # country matters and which countries have port forwarding.
+      SERVER_COUNTRIES: "{{ proton_server_countries }}"
       # NAT-PMP port forwarding (Plus tier required)
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
