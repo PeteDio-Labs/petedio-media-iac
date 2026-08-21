@@ -64,6 +64,13 @@ module "seerr" {
 
 # plex 103 — DUAL-HOMED: net0 vmbr0/86.140 (mesh, gw .86.1) + net1 vmbr1/.140.
 # local-lvm 16G, firewall on both NICs. downloads bind-mount is read-only.
+#
+# Memory is 4096, raised from 2048: the old cap peaked at 2035 MiB (99%) and
+# reached into swap. Plex's WAN upload ceilings now sit at the real 3 Mbps
+# uplink, so remote streams transcode instead of direct playing, and a
+# transcode costs more memory than a pass-through. Those ceilings live in the
+# Plex app, not here — see the vault note before assuming this file explains
+# the whole change.
 module "plex" {
   source = "../../modules/proxmox-lxc"
 
@@ -78,7 +85,7 @@ module "plex" {
   net1_bridge      = "vmbr1"
   net1_firewall    = true
   cores            = 4
-  memory_dedicated = 2048
+  memory_dedicated = 4096
   memory_swap      = 2048
   disk_size        = 16
   datastore_id     = "local-lvm"
