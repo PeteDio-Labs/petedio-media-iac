@@ -1,0 +1,20 @@
+---
+# plex-bootstrap — first-run install of Plex on a fresh LXC (107, plex-gpu).
+# The `plex` role manages UPDATES on a Plex that already exists; this one puts
+# it there. Separate roles because the two run at different times and the
+# install must never re-run against 103.
+
+plex_bootstrap_package: plexmediaserver
+plex_bootstrap_service: plexmediaserver
+plex_bootstrap_port: 32400
+
+# repo.plex.tv is the current source. downloads.plex.tv is the LEGACY one and is
+# stuck on 1.42.2 — 103 carried both for a while, which is a live footgun,
+# because apt picking the wrong one would "upgrade" Plex backwards. Only the
+# current repo is configured here.
+plex_bootstrap_repo_url: https://downloads.plex.tv/repo/deb
+plex_bootstrap_key_url: https://downloads.plex.tv/plex-keys/PlexSign.key
+plex_bootstrap_keyring: /usr/share/keyrings/plex-archive-keyring.gpg
+
+# The render node passed in by Terraform (device_passthrough on module plex_gpu).
+plex_bootstrap_render_node: /dev/dri/renderD128

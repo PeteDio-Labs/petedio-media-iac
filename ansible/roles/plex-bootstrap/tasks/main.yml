@@ -1,0 +1,84 @@
+---
+- name: Install the packages needed to add an apt repository
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - apt-transport-https
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch the Plex signing key
+  ansible.builtin.get_url:
+    url: "{{ plex_bootstrap_key_url }}"
+    dest: /tmp/PlexSign.key
+    mode: "0644"
+
+- name: Convert the signing key to a dearmoured keyring
+  ansible.builtin.command: gpg --dearmor --yes -o {{ plex_bootstrap_keyring }} /tmp/PlexSign.key
+  args:
+    creates: "{{ plex_bootstrap_keyring }}"
+
+- name: Add the Plex apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ plex_bootstrap_keyring }}] {{ plex_bootstrap_repo_url }} public main"
+    filename: plexmediaserver
+    state: present
+    update_cache: true
+
+- name: Install Plex Media Server
+  ansible.builtin.apt:
+    name: "{{ plex_bootstrap_package }}"
+    state: present
+
+- name: Ensure Plex is enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ plex_bootstrap_service }}"
+    enabled: true
+    state: started
+
+# ------------------------------------------------------------- verification --
+# Everything below proves the GPU and the library are actually usable. Without
+# these the play goes green on a Plex that transcodes in software and sees an
+# empty library, which is precisely the outcome this whole change exists to
+# avoid.
+
+- name: Assert the render node reached the container
+  ansible.builtin.stat:
+    path: "{{ plex_bootstrap_render_node }}"
+  register: plex_render
+  failed_when: not plex_render.stat.exists
+
+- name: Read the plex service user's groups
+  ansible.builtin.command: id plex
+  register: plex_id
+  changed_when: false
+
+# Terraform passes the device in with gid 44 (video). If Plex is not in that
+# group it cannot open the render node, and Plex reports no hardware transcoding
+# with no error a user would ever find.
+- name: Assert the plex user can open the render node
+  ansible.builtin.assert:
+    that: "'(video)' in plex_id.stdout"
+    fail_msg: >-
+      plex is not in the video group ({{ plex_id.stdout }}), so it cannot open
+      {{ plex_bootstrap_render_node }}. Terraform passes the device through with
+      gid 44; check module plex_gpu's device_passthrough block.
+
+- name: Assert the media library is mounted and populated
+  ansible.builtin.find:
+    paths: /mnt/media
+    file_type: directory
+    recurse: false
+  register: plex_media
+  failed_when: plex_media.matched | int == 0
+
+- name: Report what to do next
+  ansible.builtin.debug:
+    msg:
+      - "Plex is running on port {{ plex_bootstrap_port }} with {{ plex_media.matched }} library folders visible."
+      - "Render node present: {{ plex_bootstrap_render_node }}"
+      - "Claim the server at http://{{ ansible_host }}:{{ plex_bootstrap_port }}/web over the LAN or tailnet,"
+      - "then enable Settings > Transcoder > 'Use hardware acceleration when available'."
