@@ -100,6 +100,74 @@ module "plex" {
   ]
 }
 
+# plex-gpu 107/.107 — the SECOND Plex, on pve02, for hardware transcoding.
+#
+# WHY A SECOND SERVER AND NOT A MOVE. plex (103) stays exactly as it is on
+# pve01. Two Plex servers each need their own identity: copying 103's database
+# would hand both the same machine identifier and they would fight over the same
+# entry on plex.tv. So this is a fresh install that scans the same library, and
+# 103 is untouched and always rollback-ready.
+#
+# WHY pve02. pve01's two Xeon E5-2690 v2 have no integrated GPU, so every
+# transcode there is software. pve02's i5-6500T has Quick Sync at
+# /dev/dri/renderD128, passed through below. The media stays on pve01 and is
+# read over NFS (petedio-iac: ansible/playbooks/configure-media-share.yml),
+# because a 4K remux needs well under a gigabit while transcoding is what
+# actually saturates a CPU.
+#
+# ⚠ THE BRIDGE NUMBERS ARE INVERTED BETWEEN THE NODES. Do NOT copy 103's values.
+#     pve01:  vmbr0 = .86 mesh    vmbr1 = .50 LAN
+#     pve02:  vmbr0 = .50 LAN     (no second bridge yet)
+# So this container's LAN bridge is vmbr0 — the OPPOSITE of plex 103, which uses
+# vmbr1 for its .50 leg. A container placed on the wrong bridge cannot reach its
+# gateway. petedio-iac's runner.tf carries the same warning for runner-233.
+#
+# ⚠ NO .86 LEG YET, SO THIS IS NOT REACHABLE FROM TVs AND PHONES. Plex clients
+# live on the .86 Google mesh, and .86 -> .50 does not route (the .50 network is
+# NATed behind .86). pve02 has ONE physical NIC, on .50, and ARP proves there is
+# no L2 path to .86 from it: `arping -I vmbr0 192.168.86.1` from pve02 gets zero
+# replies. Reaching this server from the mesh needs a SECOND NIC in pve02 (a
+# USB-to-Ethernet adapter), bridged as vmbr1 and cabled to the mesh — either to
+# a Nest LAN port, or to pve01's free eno4 after adding eno4 to pve01's vmbr0.
+# Until that exists, reach this server over the .50 LAN or the tailnet.
+# When the NIC lands, add here:  net1_address / net1_gateway / net1_bridge.
+module "plex_gpu" {
+  source = "../../modules/proxmox-lxc"
+
+  vm_id            = 107
+  hostname         = "plex-gpu"
+  ipv4_address     = "192.168.50.107/24"
+  gateway          = "192.168.50.1"
+  bridge           = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
+  firewall         = true
+  cores            = 4
+  memory_dedicated = 4096
+  memory_swap      = 2048
+  # 32G, double plex 103's 16G: a fresh server re-downloads all artwork and
+  # metadata for the whole library rather than inheriting 103's cache.
+  disk_size    = 32
+  datastore_id = "local-lvm" # pve02's NVMe thinpool, not the USB HDD.
+  target_node  = "pve02"
+
+  ssh_public_key = var.ssh_public_key
+  description    = "Plex #2 on pve02, Quick Sync hardware transcoding. Media stack — managed by petedio-media-iac."
+
+  # Quick Sync. gid 44 = video INSIDE the container, which is the group the Plex
+  # package already puts its service user in (verified on 103: uid=999(plex)
+  # groups=996(plex),44(video)). On the pve02 host the node is root:render(993);
+  # the passthrough re-groups it on the way in.
+  device_passthrough = [
+    { path = "/dev/dri/renderD128", gid = 44, mode = "0660" },
+  ]
+
+  # The same library 103 serves, reached over NFS on this node. Identical paths
+  # on both nodes is what makes these bind mounts node-independent.
+  mount_points = [
+    { volume = local.media_volume, path = "/mnt/media" },
+    { volume = local.downloads_volume, path = "/mnt/downloads", read_only = true },
+  ]
+}
+
 # sonarr 104/.15 — sdb3-storage 4G, vmbr1
 module "sonarr" {
   source = "../../modules/proxmox-lxc"
@@ -194,6 +262,7 @@ output "media_vm_ids" {
     lidarr          = module.lidarr.vm_id
     seerr           = module.seerr.vm_id
     plex            = module.plex.vm_id
+    plex_gpu        = module.plex_gpu.vm_id
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
     prowlarr        = module.prowlarr.vm_id

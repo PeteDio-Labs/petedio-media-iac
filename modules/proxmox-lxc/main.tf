@@ -102,6 +102,21 @@ resource "proxmox_virtual_environment_container" "this" {
     }
   }
 
+  # Host device passthrough (plex-gpu 107: /dev/dri/renderD128 for Quick Sync).
+  # Only emitted when var.device_passthrough is non-empty, so every existing
+  # media LXC plans unchanged. Proxmox writes these as `dev0:` entries and sets
+  # the unprivileged container's cgroup device rules itself, which is why this
+  # does NOT need the container to be privileged.
+  dynamic "device_passthrough" {
+    for_each = var.device_passthrough
+    content {
+      path = device_passthrough.value.path
+      uid  = device_passthrough.value.uid
+      gid  = device_passthrough.value.gid
+      mode = device_passthrough.value.mode
+    }
+  }
+
   # Brownfield-capture ignore set. Beyond the bpg round-trip trio
   # (template_file_id / user_account / features), media LXCs were created by the
   # community-scripts installer, which left per-host cosmetic state that we must
