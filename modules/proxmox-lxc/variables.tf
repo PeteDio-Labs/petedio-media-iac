@@ -103,6 +103,21 @@ variable "net1_bridge" {
   default     = null
 }
 
+variable "net1_mtu" {
+  description = <<-EOT
+    MTU for the second NIC. Leave null for a normal 1500-byte link.
+
+    Set it when the second NIC rides a tunnel rather than copper: plex-gpu 236
+    reaches the .86 mesh over a VXLAN from pve02 to pve01, and VXLAN spends 50
+    bytes of the 1500-byte underlay on its own headers. A guest still sending
+    1500 there produces frames that cannot fit, and the failure is the ugly kind
+    — small packets pass, large ones vanish, so it looks like an application bug
+    rather than an MTU one.
+  EOT
+  type        = number
+  default     = null
+}
+
 variable "net1_firewall" {
   description = "Enable the Proxmox firewall on the second interface."
   type        = bool
