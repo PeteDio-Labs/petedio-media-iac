@@ -160,3 +160,22 @@ variable "description" {
   type        = string
   default     = "Managed by Terraform (petedio-media-iac)."
 }
+
+# Host devices passed into the container. Added for plex-gpu (107) on pve02,
+# which needs /dev/dri/renderD128 to use the i5-6500T's Quick Sync encoder.
+#
+# gid is the group the device node gets INSIDE the container, not on the host.
+# On the host it is root:render (993 on pve02); inside a Debian container the
+# useful group is video (44), which is the group the Plex package already adds
+# its service user to. Passing gid = 44 is therefore what makes the device
+# usable without touching Plex's own user or groups.
+variable "device_passthrough" {
+  description = "Host devices to expose inside the container (e.g. /dev/dri/renderD128 for Quick Sync)."
+  type = list(object({
+    path = string
+    uid  = optional(number)
+    gid  = optional(number)
+    mode = optional(string)
+  }))
+  default = []
+}

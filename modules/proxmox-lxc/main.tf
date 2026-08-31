@@ -102,6 +102,21 @@ resource "proxmox_virtual_environment_container" "this" {
     }
   }
 
+  # Host device passthrough (plex-gpu 107: /dev/dri/renderD128 for Quick Sync).
+  # Only emitted when var.device_passthrough is non-empty, so every existing
+  # media LXC plans unchanged. Proxmox writes these as `dev0:` entries and sets
+  # the unprivileged container's cgroup device rules itself, which is why this
+  # does NOT need the container to be privileged.
+  dynamic "device_passthrough" {
+    for_each = var.device_passthrough
+    content {
+      path = device_passthrough.value.path
+      uid  = device_passthrough.value.uid
+      gid  = device_passthrough.value.gid
+      mode = device_passthrough.value.mode
+    }
+  }
+
   # Brownfield-capture ignore set. Beyond the bpg round-trip trio
   # (template_file_id / user_account / features), media LXCs were created by the
   # community-scripts installer, which left per-host cosmetic state that we must
@@ -128,6 +143,16 @@ resource "proxmox_virtual_environment_container" "this" {
       timeout_start,
       timeout_update,
       cpu,
+      # startup: boot order and up/down delays are set on the node with
+      # `pct set <id> --startup order=N,up=S,down=S`, not declared here. Nothing
+      # in this repo sets them, so an apply would otherwise STRIP the ordering
+      # that PET-305 put on every media LXC before the lab move — a regression
+      # that only shows up at the next cold boot. petedio-iac's copy of this
+      # module carries the same entry for the same reason; this one was missed
+      # because PET-305 never applied media-iac. Verified on the cluster:
+      # 100/101/103/104/105/109 are order=7,up=0,down=15 and 110 is
+      # order=6,up=20,down=30. Recorded in petedio-iac docs/runbooks/lab-move.md.
+      startup,
     ]
   }
 }
