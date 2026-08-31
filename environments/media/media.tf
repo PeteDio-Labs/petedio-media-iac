@@ -167,12 +167,25 @@ module "plex_gpu" {
     { path = "/dev/dri/renderD128", gid = 44, mode = "0660" },
   ]
 
-  # The same library 103 serves, reached over NFS on this node. Identical paths
-  # on both nodes is what makes these bind mounts node-independent.
-  mount_points = [
-    { volume = local.media_volume, path = "/mnt/media" },
-    { volume = local.downloads_volume, path = "/mnt/downloads", read_only = true },
-  ]
+  # NO mount_points HERE, DELIBERATELY. This container serves the same library
+  # 103 does, over NFS, bind-mounted at /mnt/media and /mnt/downloads — but
+  # Terraform cannot create those. A bind mount is gated behind Proxmox's
+  # hardcoded `user == root@pam` check, and the provider authenticates with an
+  # API token, so a create carrying a mount_point block fails with:
+  #
+  #   Permission check failed (mount point type bind is only allowed for root@pam)
+  #
+  # The other seven media LXCs declare mount_points and are fine because they
+  # were IMPORTED: Terraform adopted mounts that already existed. A new container
+  # is the case that breaks, and it broke on the first apply of this module.
+  #
+  # So Terraform creates the container bare, and scripts/lxc-mounts-236.sh adds
+  # both mounts with `pct set` as root@pam on pve02. The module keeps mount_point
+  # in ignore_changes, so a later apply never strips them. Same split as
+  # features/nesting — see docs/GOTCHAS.md and petedio-iac's scripts/lxc-features-*.sh.
+  #
+  # Run the script BEFORE bootstrap-plex-gpu.yml; the play asserts /mnt/media is
+  # mounted and non-empty inside the container and will fail without it.
 }
 
 # sonarr 104/.15 — sdb3-storage 4G, vmbr1
