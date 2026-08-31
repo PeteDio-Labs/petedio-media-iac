@@ -8,13 +8,36 @@ plex_bootstrap_package: plexmediaserver
 plex_bootstrap_service: plexmediaserver
 plex_bootstrap_port: 32400
 
-# repo.plex.tv is the current source. downloads.plex.tv is the LEGACY one and is
-# stuck on 1.42.2 — 103 carried both for a while, which is a live footgun,
-# because apt picking the wrong one would "upgrade" Plex backwards. Only the
-# current repo is configured here.
-plex_bootstrap_repo_url: https://downloads.plex.tv/repo/deb
-plex_bootstrap_key_url: https://downloads.plex.tv/plex-keys/PlexSign.key
-plex_bootstrap_keyring: /usr/share/keyrings/plex-archive-keyring.gpg
+# THE REPO AND THE KEY MUST MATCH, AND THE OBVIOUS PAIRING IS THE WRONG ONE.
+#
+# repo.plex.tv is the current repository and carries 1.43.3. downloads.plex.tv is
+# the LEGACY one, stuck on 1.42.2. They are signed by DIFFERENT keys:
+#
+#   downloads.plex.tv/repo/deb   <- PlexSign.key,  0x97203C7B3ADCA79D, created 2015
+#   repo.plex.tv/deb             <- vendored below, 0x06C521790B9CFFDE
+#
+# PlexSign.key is the only key Plex publishes at a well-known URL, so reaching
+# for it is the natural move — and it verifies neither repo on Debian 13. Its
+# self-signature uses SHA-1, and trixie's apt verifies with sqv, which rejects
+# SHA-1 binding signatures from 2026-02-01:
+#
+#   Policy rejected non-revocation signature (PositiveCertification)
+#   ... SHA1 is not considered secure since 2026-02-01
+#
+# Debian 12 accepts it, which is why plex 103 (bookworm) never hit this and why
+# the first attempt here looked like a Plex outage rather than a policy change.
+#
+# The current key is not published as a file anywhere obvious. It is on
+# keyserver.ubuntu.com, but a keyserver at install time is both a runtime
+# dependency and a thing to have to trust, so the key is VENDORED in
+# files/plexmediaserver.gpg and its fingerprint asserted before use. The copy was
+# taken from plex 103, which has been verifying against this repo in production,
+# and matches what the keyserver returns for the same fingerprint.
+plex_bootstrap_repo_uri: https://repo.plex.tv/deb/
+plex_bootstrap_repo_suite: public
+plex_bootstrap_repo_component: main
+plex_bootstrap_keyring: /etc/apt/keyrings/plexmediaserver.gpg
+plex_bootstrap_key_fingerprint: 6EFFEB478A6559D75C7C4FE706C521790B9CFFDE
 
-# The render node passed in by Terraform (device_passthrough on module plex_gpu).
+# The render node passed in out-of-band (scripts/lxc-oob-236.sh sets dev0).
 plex_bootstrap_render_node: /dev/dri/renderD128

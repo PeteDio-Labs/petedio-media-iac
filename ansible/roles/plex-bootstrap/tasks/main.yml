@@ -10,22 +10,60 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: Fetch the Plex signing key
-  ansible.builtin.get_url:
-    url: "{{ plex_bootstrap_key_url }}"
-    dest: /tmp/PlexSign.key
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: "{{ plex_bootstrap_keyring | dirname }}"
+    state: directory
+    mode: "0755"
+
+# Vendored rather than downloaded: the key that signs repo.plex.tv is not
+# published at a well-known URL, and the one that IS published (PlexSign.key)
+# signs only the legacy repo and is rejected by Debian 13's sqv for using SHA-1.
+# See defaults/main.yml for the full account.
+- name: Install the Plex signing key
+  ansible.builtin.copy:
+    src: plexmediaserver.gpg
+    dest: "{{ plex_bootstrap_keyring }}"
     mode: "0644"
+    owner: root
+    group: root
 
-- name: Convert the signing key to a dearmoured keyring
-  ansible.builtin.command: gpg --dearmor --yes -o {{ plex_bootstrap_keyring }} /tmp/PlexSign.key
-  args:
-    creates: "{{ plex_bootstrap_keyring }}"
+# Pin it. A copy step alone would happily install whatever the file contained.
+- name: Read the installed keyring's fingerprints
+  ansible.builtin.command: gpg --show-keys --with-colons {{ plex_bootstrap_keyring }}
+  register: plex_key_show
+  changed_when: false
 
+- name: Assert the keyring is the expected Plex key
+  ansible.builtin.assert:
+    that: plex_bootstrap_key_fingerprint in plex_key_show.stdout
+    fail_msg: >-
+      {{ plex_bootstrap_keyring }} does not contain {{ plex_bootstrap_key_fingerprint }}.
+      Refusing to configure an apt repository against an unrecognised signing key.
+
+# deb822 format, matching plex 103. The one-line `deb [signed-by=...]` form works
+# too, but 103 is the reference and a diff between the two hosts should be empty.
 - name: Add the Plex apt repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by={{ plex_bootstrap_keyring }}] {{ plex_bootstrap_repo_url }} public main"
-    filename: plexmediaserver
-    state: present
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/plexmediaserver.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: {{ plex_bootstrap_repo_uri }}
+      Suites: {{ plex_bootstrap_repo_suite }}
+      Components: {{ plex_bootstrap_repo_component }}
+      Signed-By: {{ plex_bootstrap_keyring }}
+
+# Remove the legacy one-line file if an earlier run of this role left it behind.
+# Left in place it shadows the repo above with a 1.42.2 candidate that fails to
+# verify, and apt reports the failure for the whole update rather than that file.
+- name: Remove the legacy plexmediaserver.list if present
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/plexmediaserver.list
+    state: absent
+
+- name: Update the apt cache
+  ansible.builtin.apt:
     update_cache: true
 
 - name: Install Plex Media Server
@@ -45,6 +83,7 @@
 # empty library, which is precisely the outcome this whole change exists to
 # avoid.
 
+# Set by scripts/lxc-oob-236.sh (`pct set 236 -dev0 ...`), not by Terraform.
 - name: Assert the render node reached the container
   ansible.builtin.stat:
     path: "{{ plex_bootstrap_render_node }}"
@@ -64,8 +103,9 @@
     that: "'(video)' in plex_id.stdout"
     fail_msg: >-
       plex is not in the video group ({{ plex_id.stdout }}), so it cannot open
-      {{ plex_bootstrap_render_node }}. Terraform passes the device through with
-      gid 44; check module plex_gpu's device_passthrough block.
+      {{ plex_bootstrap_render_node }}. The device is passed through with gid 44
+      by scripts/lxc-oob-236.sh, not by Terraform — Proxmox gates device
+      passthrough behind root@pam. Re-run that script.
 
 - name: Assert the media library is mounted and populated
   ansible.builtin.find:
