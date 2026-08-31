@@ -143,6 +143,18 @@ resource "proxmox_virtual_environment_container" "this" {
       timeout_start,
       timeout_update,
       cpu,
+      # mount_point: a BIND mount (a host path into the guest) is gated behind
+      # Proxmox's hardcoded `user == root@pam` check, exactly like features. An
+      # API token's username is `root@pam!tokenid`, so the create fails with
+      # `Permission check failed (mount point type bind is only allowed for
+      # root@pam)`. The seven existing media LXCs never hit this because they
+      # were IMPORTED — Terraform adopted mounts it never had to create. A NEW
+      # container must therefore be created with NO mount_point block, and the
+      # mounts added out-of-band with `pct set` as root@pam on the node
+      # (scripts/lxc-mounts-236.sh). Ignoring it here keeps the imported hosts
+      # clean and stops a later apply stripping a mount the token cannot
+      # recreate. petedio-iac's copy of this module carries the same entry.
+      mount_point,
       # startup: boot order and up/down delays are set on the node with
       # `pct set <id> --startup order=N,up=S,down=S`, not declared here. Nothing
       # in this repo sets them, so an apply would otherwise STRIP the ordering
