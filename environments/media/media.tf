@@ -159,13 +159,16 @@ module "plex_gpu" {
   ssh_public_key = var.ssh_public_key
   description    = "Plex #2 on pve02, Quick Sync hardware transcoding. Media stack — managed by petedio-media-iac."
 
-  # Quick Sync. gid 44 = video INSIDE the container, which is the group the Plex
-  # package already puts its service user in (verified on 103: uid=999(plex)
-  # groups=996(plex),44(video)). On the pve02 host the node is root:render(993);
-  # the passthrough re-groups it on the way in.
-  device_passthrough = [
-    { path = "/dev/dri/renderD128", gid = 44, mode = "0660" },
-  ]
+  # NO device_passthrough HERE, for the same reason there are no mount_points:
+  # adding a host device to an unprivileged LXC is root@pam-only, and the
+  # provider holds an API token. The create fails with `Permission check failed
+  # (configuring device passthrough is only allowed for root@pam)`.
+  #
+  # scripts/lxc-oob-236.sh sets it: `pct set 236 -dev0
+  # /dev/dri/renderD128,gid=44,mode=0660`. gid 44 = video INSIDE the container,
+  # the group the Plex package already puts its service user in (verified on 103:
+  # uid=999(plex) groups=996(plex),44(video)). On the pve02 host the node is
+  # root:render(993); the passthrough re-groups it on the way in.
 
   # NO mount_points HERE, DELIBERATELY. This container serves the same library
   # 103 does, over NFS, bind-mounted at /mnt/media and /mnt/downloads — but

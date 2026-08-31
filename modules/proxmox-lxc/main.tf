@@ -143,6 +143,17 @@ resource "proxmox_virtual_environment_container" "this" {
       timeout_start,
       timeout_update,
       cpu,
+      # device_passthrough: adding a host device to an unprivileged LXC is gated
+      # behind the same hardcoded `root@pam` check. The create fails with
+      # `Permission check failed (configuring device passthrough is only allowed
+      # for root@pam)`. Set it out-of-band with `pct set <id> -dev0 ...`
+      # (scripts/lxc-oob-236.sh), exactly as petedio-iac does for the tun device
+      # on tailscale 244 and openfaas 241.
+      device_passthrough,
+      # idmap: root@pam-only for the same reason, and load-bearing where it
+      # exists. Declared here so an apply can never strip one. No media LXC sets
+      # it today, so this is a no-op for them.
+      idmap,
       # mount_point: a BIND mount (a host path into the guest) is gated behind
       # Proxmox's hardcoded `user == root@pam` check, exactly like features. An
       # API token's username is `root@pam!tokenid`, so the create fails with
