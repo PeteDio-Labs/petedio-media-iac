@@ -88,6 +88,7 @@ resource "proxmox_virtual_environment_container" "this" {
       name     = "eth1"
       bridge   = var.net1_bridge
       firewall = var.net1_firewall
+      mtu      = var.net1_mtu
     }
   }
 

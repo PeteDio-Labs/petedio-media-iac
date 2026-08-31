@@ -122,15 +122,22 @@ module "plex" {
 # vmbr1 for its .50 leg. A container placed on the wrong bridge cannot reach its
 # gateway. petedio-iac's runner.tf carries the same warning for runner-233.
 #
-# ⚠ NO .86 LEG YET, SO THIS IS NOT REACHABLE FROM TVs AND PHONES. Plex clients
-# live on the .86 Google mesh, and .86 -> .50 does not route (the .50 network is
-# NATed behind .86). pve02 has ONE physical NIC, on .50, and ARP proves there is
-# no L2 path to .86 from it: `arping -I vmbr0 192.168.86.1` from pve02 gets zero
-# replies. Reaching this server from the mesh needs a SECOND NIC in pve02 (a
-# USB-to-Ethernet adapter), bridged as vmbr1 and cabled to the mesh — either to
-# a Nest LAN port, or to pve01's free eno4 after adding eno4 to pve01's vmbr0.
-# Until that exists, reach this server over the .50 LAN or the tailnet.
-# When the NIC lands, add here:  net1_address / net1_gateway / net1_bridge.
+# THE .86 LEG RIDES A TUNNEL, NOT A CABLE. Plex clients live on the .86 Google
+# mesh, and .86 -> .50 does not route (the .50 network is NATed behind .86).
+# pve02 has ONE physical NIC, on .50, so it has no physical path to the mesh and
+# no second NIC was available.
+#
+# Instead, a VXLAN carries mesh layer-2 across the existing .50 cable to pve01,
+# which IS cabled to the mesh, and pve01 bridges the tunnel into its own mesh
+# bridge. pve02 gets vmbr1 backed by that tunnel, and this container holds a real
+# 192.168.86.236 with native client discovery — no NAT and no proxy. Set up in
+# /etc/network/interfaces on both nodes; see the PET-311 runbook.
+#
+# NO net1_gateway ON PURPOSE. The default route stays on the .50 leg so the NFS
+# media path from pve01 is unchanged; .86 is reached as a directly-connected
+# route. Giving this leg a gateway too would install a second default route.
+#
+# net1_mtu = 1450 is load-bearing: VXLAN spends 50 of the underlay's 1500 bytes.
 #
 # WHY 236 AND NOT A 1xx. The 1xx block is the pve01 media stack. This server runs
 # on pve02, so it follows the convention every non-media service uses: a 2xx VMID
@@ -158,6 +165,13 @@ module "plex_gpu" {
 
   ssh_public_key = var.ssh_public_key
   description    = "Plex #2 on pve02, Quick Sync hardware transcoding. Media stack — managed by petedio-media-iac."
+
+  # The mesh leg. vmbr1 on pve02 is the VXLAN-backed bridge, NOT a physical NIC —
+  # and note this is the opposite of plex 103, where vmbr1 is the .50 LAN.
+  net1_bridge   = "vmbr1"
+  net1_address  = "192.168.86.236/24"
+  net1_firewall = true
+  net1_mtu      = 1450
 
   # NO device_passthrough HERE, for the same reason there are no mount_points:
   # adding a host device to an unprivileged LXC is root@pam-only, and the
