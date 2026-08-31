@@ -100,7 +100,7 @@ module "plex" {
   ]
 }
 
-# plex-gpu 107/.107 — the SECOND Plex, on pve02, for hardware transcoding.
+# plex-gpu 236/.236 — the SECOND Plex, on pve02, for hardware transcoding.
 #
 # WHY A SECOND SERVER AND NOT A MOVE. plex (103) stays exactly as it is on
 # pve01. Two Plex servers each need their own identity: copying 103's database
@@ -131,12 +131,19 @@ module "plex" {
 # a Nest LAN port, or to pve01's free eno4 after adding eno4 to pve01's vmbr0.
 # Until that exists, reach this server over the .50 LAN or the tailnet.
 # When the NIC lands, add here:  net1_address / net1_gateway / net1_bridge.
+#
+# WHY 236 AND NOT A 1xx. The 1xx block is the pve01 media stack. This server runs
+# on pve02, so it follows the convention every non-media service uses: a 2xx VMID
+# with the IP's last octet matching it — 221 minio, 231 postgres, 233 runner, 235
+# plane. 23x is the Apps block, and runner-233 already proves a 23x guest on
+# pve02. 234 is skipped on purpose: it was palworld-234, and the vault's host
+# notes are keyed on VMID, so reusing a retired number makes its note ambiguous.
 module "plex_gpu" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id            = 107
+  vm_id            = 236
   hostname         = "plex-gpu"
-  ipv4_address     = "192.168.50.107/24"
+  ipv4_address     = "192.168.50.236/24"
   gateway          = "192.168.50.1"
   bridge           = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
   firewall         = true

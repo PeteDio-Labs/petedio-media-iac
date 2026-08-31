@@ -1,5 +1,5 @@
 ---
-# bootstrap-plex-gpu.yml — first-run install of Plex on 107 (pve02), the
+# bootstrap-plex-gpu.yml — first-run install of Plex on 236 (pve02), the
 # hardware-transcoding server (PET-311).
 #
 # Run this ONCE, after Terraform has created the container. It targets the
@@ -9,7 +9,7 @@
 #   ansible-playbook playbooks/bootstrap-plex-gpu.yml
 #
 # Claiming the server is interactive and stays manual: open
-# http://192.168.50.107:32400/web from the LAN or the tailnet, sign in, add a
+# http://192.168.50.236:32400/web from the LAN or the tailnet, sign in, add a
 # library pointing at /mnt/media, and switch on hardware acceleration.
 
 - name: Bootstrap Plex on the pve02 GPU node

@@ -1,5 +1,5 @@
 ---
-# plex-bootstrap — first-run install of Plex on a fresh LXC (107, plex-gpu).
+# plex-bootstrap — first-run install of Plex on a fresh LXC (236, plex-gpu).
 # The `plex` role manages UPDATES on a Plex that already exists; this one puts
 # it there. Separate roles because the two run at different times and the
 # install must never re-run against 103.
