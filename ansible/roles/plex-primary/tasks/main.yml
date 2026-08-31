@@ -1,0 +1,44 @@
+---
+- name: Decide this host's role
+  ansible.builtin.set_fact:
+    plex_is_primary: "{{ plex_primary == inventory_hostname }}"
+
+# Demoting a server that is mid-stream drops the viewer with no explanation, so
+# check first. The primary is never blocked — starting a server harms nobody.
+- name: Standby — look for active playback before stopping
+  when: not plex_is_primary
+  block:
+    - name: Standby — read Plex's own session count
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        TOK=$(grep -oE 'PlexOnlineToken="[^"]*"' "{{ plex_primary_prefs }}" | sed 's/.*="//;s/"//');
+        curl -s --max-time 8 -H "X-Plex-Token: $TOK"
+        "http://127.0.0.1:{{ plex_primary_port }}/status/sessions"
+        | grep -oE 'size="[0-9]+"' | head -1 | grep -oE '[0-9]+'
+      args: { executable: /bin/bash }
+      register: plex_primary_sessions
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Standby — refuse to interrupt a viewer
+      ansible.builtin.assert:
+        that: (plex_primary_sessions.stdout | trim | int) == 0 or plex_primary_force
+        fail_msg: >-
+          {{ inventory_hostname }} has {{ plex_primary_sessions.stdout | trim }}
+          active stream(s). Demoting it now would cut them off. Wait, or re-run
+          with -e plex_primary_force=true.
+
+# enabled matters as much as state: a stopped-but-enabled Plex comes back on the
+# next container reboot, and the house silently has two servers again.
+- name: Converge the Plex service to this host's role
+  ansible.builtin.systemd_service:
+    name: "{{ plex_primary_service }}"
+    enabled: "{{ plex_is_primary }}"
+    state: "{{ 'started' if plex_is_primary else 'stopped' }}"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is {{ 'the PRIMARY - running and enabled'
+      if plex_is_primary else 'on STANDBY - stopped and disabled' }}

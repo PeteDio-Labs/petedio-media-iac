@@ -12,11 +12,16 @@
 # The removal is declared in host_vars/plex.yml via media_base_stale_apt_sources
 # so the mechanism is reusable rather than special-cased here.
 ---
-- name: Plex — service enabled and running
+# NOT unconditionally started. 103 is the cold spare while plex-gpu (236) serves,
+# and a hardcoded `state: started` here would silently resurrect it on the next
+# configure-media run — putting two Plex servers back on the network, which is
+# how clients end up on the wrong one with nobody able to tell from the couch.
+# plex-primary owns this decision; this role only honours it.
+- name: Plex — service state follows the primary/standby role
   ansible.builtin.systemd_service:
     name: "{{ plex_service }}"
-    enabled: true
-    state: started
+    enabled: "{{ plex_primary | default('plex-gpu') == inventory_hostname }}"
+    state: "{{ 'started' if plex_primary | default('plex-gpu') == inventory_hostname else 'stopped' }}"
 
 # ------------------------------------------------------------ version state --
 - name: Plex — refresh apt cache
@@ -84,11 +89,17 @@
       changed_when: false
       check_mode: false
       no_log: true
+      # A standby server is stopped, so this connection is refused. That is not a
+      # failure — a server that is not running has no viewers to protect. Without
+      # this the whole update block aborts on the cold spare, and the spare you
+      # are keeping for a failover quietly stops receiving patches.
+      failed_when: false
 
     - name: Plex — resolve active session count
       ansible.builtin.set_fact:
         plex_active_sessions: >-
-          {{ plex_sessions.content | regex_search('size="(\d+)"', '\1') | first | default('0') | int }}
+          {{ (plex_sessions.content | default('') | regex_search('size="(\d+)"', '\1') | first | default('0')) | int
+             if (plex_sessions.status | default(0)) == 200 else 0 }}
 
     - name: Plex — skip update, someone is watching
       ansible.builtin.debug:

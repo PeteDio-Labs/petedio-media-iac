@@ -1,0 +1,34 @@
+---
+# plex-primary.yml — choose which Plex serves the house, and enforce it. (PET-311)
+#
+# Two Plex servers read the same library: plex (103) on pve01, and plex-gpu (236)
+# on pve02, which has the Quick Sync GPU. Exactly one runs at a time. The other
+# is stopped AND disabled, so a container reboot cannot quietly bring it back.
+#
+# NORMAL STATE — plex-gpu serves, plex 103 is the cold spare:
+#
+#     ansible-playbook playbooks/plex-primary.yml
+#
+# FAILOVER — pve02 is down or 236 is broken, promote 103:
+#
+#     ansible-playbook playbooks/plex-primary.yml -e plex_primary=plex
+#
+# That failover command is the whole point of ignore_unreachable below. When
+# pve02 is down, 236 cannot be demoted because it cannot be reached — and it does
+# not need to be, since it is already off the network. Promoting 103 must not be
+# blocked by the unreachability of the machine you are failing away FROM.
+#
+# Add -e plex_primary_force=true to demote a server that is mid-stream.
+#
+# The library is read-only shared and each server keeps its own database, so
+# flipping back and forth is safe. Watched state lives on your Plex account
+# rather than on either server, so it follows you across the switch. Resume
+# positions do NOT — they are per-server.
+
+- name: Enforce which Plex is the primary
+  hosts: plex:plex-gpu
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+  roles:
+    - plex-primary
