@@ -1,0 +1,21 @@
+---
+# plex-primary — decides WHICH Plex serves the house, and enforces it.
+#
+# Two Plex servers now read the same library: plex (103) on pve01 and plex-gpu
+# (236) on pve02. Exactly one should be running. Two live servers is not a
+# redundancy win — it is a support problem, because clients pick whichever they
+# saw last and you cannot tell from the couch which one you are on.
+
+# The inventory hostname of the server that should be serving.
+# Failover is a one-word change:  -e plex_primary=plex
+plex_primary: plex-gpu
+
+plex_primary_service: plexmediaserver
+
+# Refuse to demote a server while somebody is mid-episode. Override for a
+# planned cutover:  -e plex_primary_force=true
+plex_primary_force: false
+
+plex_primary_port: 32400
+plex_primary_prefs: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
