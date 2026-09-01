@@ -115,6 +115,66 @@
   register: plex_media
   failed_when: plex_media.matched | int == 0
 
+# ------------------------------------------------- library scanning over NFS --
+- name: Read the Plex token for the settings API
+  ansible.builtin.slurp:
+    src: "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml"
+  register: plex_scan_prefs
+  no_log: true
+  check_mode: false
+
+- name: Extract the token
+  ansible.builtin.set_fact:
+    plex_scan_token: >-
+      {{ (plex_scan_prefs.content | b64decode
+          | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
+  no_log: true
+
+# Scheduled scanning, because inotify cannot see NFS writes. Without this the
+# server never notices new media and the failure is silent — the library simply
+# stays as it was, which reads as "the download broke" rather than "nothing is
+# scanning".
+- name: Turn on scheduled library scanning
+  when: plex_scan_token | length > 0
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ plex_bootstrap_port }}/:/prefs?ScheduledLibraryUpdatesEnabled={{
+      1 if plex_bootstrap_scheduled_scan else 0 }}&ScheduledLibraryUpdateInterval={{
+      plex_bootstrap_scan_interval }}&FSEventLibraryUpdatesEnabled={{
+      1 if plex_bootstrap_fsevent_scan else 0 }}
+    method: PUT
+    headers:
+      X-Plex-Token: "{{ plex_scan_token }}"
+    status_code: [200]
+  no_log: true
+  changed_when: true
+
+- name: Read the scanning settings back
+  when: plex_scan_token | length > 0
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_bootstrap_port }}/:/prefs"
+    headers:
+      X-Plex-Token: "{{ plex_scan_token }}"
+    return_content: true
+  register: plex_scan_check
+  changed_when: false
+  no_log: true
+
+# A silent no-op here is the whole failure mode, so prove the setting stuck
+# rather than trusting the PUT returned 200.
+- name: Assert scheduled scanning really is on
+  when:
+    - plex_scan_token | length > 0
+    - plex_bootstrap_scheduled_scan | bool
+  ansible.builtin.assert:
+    that:
+      - plex_scan_check.content is search('ScheduledLibraryUpdatesEnabled" [^>]*value="1"')
+    fail_msg: >-
+      ScheduledLibraryUpdatesEnabled did not stick. Without it this server never
+      notices new media, because inotify does not work over NFS.
+    success_msg: >-
+      Scheduled scanning on, every {{ plex_bootstrap_scan_interval }}s.
+
 - name: Report what to do next
   ansible.builtin.debug:
     msg:
