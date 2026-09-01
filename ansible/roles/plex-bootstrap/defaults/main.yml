@@ -54,6 +54,17 @@ plex_bootstrap_render_node: /dev/dri/renderD128
 # scanning at all, and enabling the obvious one would not have helped.
 #
 # Scheduled scanning is the only mechanism that works here.
+# HOURLY since PET-320, down from every 15 minutes. Sonarr and Radarr now notify
+# Plex directly on import (configure-plex-connect.yml), proven end to end: a
+# season pack went from search to eleven episodes visible in under three minutes,
+# with ONE SECOND between the final import and Plex completing its scan. Sweeping
+# a 3.2 TB library over NFS four times an hour to find what a webhook already
+# found is wasted work.
+#
+# ⚠ REDUCED, NOT REMOVED, and the reason matters. inotify does not cross NFS, so
+# 236 cannot notice a file on its own. The notification only fires for what the
+# *arr apps import — a hand-copied file, a restore, or anything added by another
+# tool has NO other detection path. Hourly is the backstop for exactly that.
 plex_bootstrap_scheduled_scan: true
-plex_bootstrap_scan_interval: 900     # seconds; 15 minutes
+plex_bootstrap_scan_interval: 3600    # seconds; hourly
 plex_bootstrap_fsevent_scan: false    # inotify — useless over NFS, off to be explicit
