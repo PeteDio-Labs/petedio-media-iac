@@ -6,7 +6,7 @@
 # Order is consumers-before-producers, so nothing is stopped mid-handoff:
 #
 #   1. plex + seerr      user-facing — stop first so nobody is cut off mid-action
-#   2. sonarr/radarr/lidarr   importers — they consume from qBittorrent
+#   2. sonarr/radarr   importers — they consume from qBittorrent
 #   3. prowlarr          indexer — the *arr apps query it, so it outlives them
 #   4. qbittorrent-vpn   downloader — last, so imports upstream have settled
 #
@@ -25,8 +25,8 @@
   roles:
     - media-lifecycle
 
-- name: Media stack down — 2/4 importers (sonarr, radarr, lidarr)
-  hosts: sonarr,radarr,lidarr
+- name: Media stack down — 2/4 importers (sonarr, radarr)
+  hosts: sonarr,radarr
   gather_facts: false
   vars:
     media_lifecycle_state: stopped

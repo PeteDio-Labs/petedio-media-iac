@@ -23,27 +23,6 @@ locals {
   downloads_volume = "/mnt/downloads"
 }
 
-# lidarr 100/.14 — local-lvm 4G, vmbr1
-module "lidarr" {
-  source = "../../modules/proxmox-lxc"
-
-  vm_id            = 100
-  hostname         = "lidarr"
-  ipv4_address     = "192.168.50.14/24"
-  cores            = 2
-  memory_dedicated = 1024
-  disk_size        = 4
-  datastore_id     = "local-lvm"
-  ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
-  description      = "Lidarr (music). Media stack — managed by petedio-media-iac."
-
-  mount_points = [
-    { volume = local.media_volume, path = "/mnt/media" },
-    { volume = local.downloads_volume, path = "/downloads" },
-  ]
-}
-
 # seerr 101/.33 — sdb3-storage 12G, eth1-only (firewall on), NO bind-mounts
 module "seerr" {
   source = "../../modules/proxmox-lxc"
@@ -296,7 +275,6 @@ module "qbittorrent_vpn" {
 output "media_vm_ids" {
   description = "VMIDs of the captured media containers."
   value = {
-    lidarr          = module.lidarr.vm_id
     seerr           = module.seerr.vm_id
     plex            = module.plex.vm_id
     plex_gpu        = module.plex_gpu.vm_id

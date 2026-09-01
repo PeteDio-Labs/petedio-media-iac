@@ -8,7 +8,7 @@
 #
 #   1. qbittorrent-vpn   the VPN tunnel must be up before anything expects downloads
 #   2. prowlarr          the *arr apps query it for indexers on startup
-#   3. sonarr/radarr/lidarr
+#   3. sonarr/radarr
 #   4. seerr + plex      user-facing last, so the stack is whole when users arrive
 #
 # Each tier waits for its port to actually accept connections before the next
@@ -31,8 +31,8 @@
   roles:
     - media-lifecycle
 
-- name: Media stack up — 3/4 importers (sonarr, radarr, lidarr)
-  hosts: sonarr,radarr,lidarr
+- name: Media stack up — 3/4 importers (sonarr, radarr)
+  hosts: sonarr,radarr
   gather_facts: false
   vars:
     media_lifecycle_state: started

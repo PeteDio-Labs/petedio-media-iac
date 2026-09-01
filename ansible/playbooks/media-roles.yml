@@ -13,7 +13,7 @@
   roles:
     - media-base
 
-- name: Servarr apps (sonarr / radarr / lidarr / prowlarr)
+- name: Servarr apps (sonarr / radarr / prowlarr)
   hosts: servarr
   gather_facts: false
   roles:

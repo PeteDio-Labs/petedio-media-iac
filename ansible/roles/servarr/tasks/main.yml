@@ -1,4 +1,5 @@
-# servarr — one role for the four *arr apps (sonarr/radarr/lidarr/prowlarr).
+# servarr — one role for the three *arr apps (sonarr/radarr/prowlarr).
+# lidarr was removed in PET-319: nobody used it, and the Music library went with it.
 #
 # They share an install shape (community-script tarball at /opt/<App>, data at
 # /var/lib/<app>, a systemd unit) and, crucially, an update contract: each
