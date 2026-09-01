@@ -41,3 +41,19 @@ plex_bootstrap_key_fingerprint: 6EFFEB478A6559D75C7C4FE706C521790B9CFFDE
 
 # The render node passed in out-of-band (scripts/lxc-oob-236.sh sets dev0).
 plex_bootstrap_render_node: /dev/dri/renderD128
+
+# --- library scanning over NFS -------------------------------------------
+# ⚠ AUTO-DETECT CANNOT WORK ON THIS SERVER. Plex's "update my library
+# automatically" is built on inotify, and inotify does not propagate over NFS: a
+# file pve01 writes to /mnt/media is never seen by a watcher on pve02. plex 103
+# is fine because its storage is local; 236 reads the same library over NFS and
+# would sit there forever with no idea anything had changed.
+#
+# Found the hard way on 2026-09-01 — the first new episode added after 236 went
+# live never appeared, while 103 had it. Both mechanisms were off, so nothing was
+# scanning at all, and enabling the obvious one would not have helped.
+#
+# Scheduled scanning is the only mechanism that works here.
+plex_bootstrap_scheduled_scan: true
+plex_bootstrap_scan_interval: 900     # seconds; 15 minutes
+plex_bootstrap_fsevent_scan: false    # inotify — useless over NFS, off to be explicit
