@@ -1,0 +1,42 @@
+---
+# plex-connect — tell Plex to scan the moment Sonarr or Radarr imports something,
+# instead of waiting for the next scheduled sweep.
+#
+# WHY THIS EXISTS. plex-gpu (236) reads the library over NFS, and Plex's automatic
+# detection is built on inotify, which does not cross NFS: a file pve01 writes is
+# never seen by a watcher on pve02. Scheduled scanning was the workaround, and it
+# means up to 15 minutes between a download finishing and it appearing.
+#
+# A notification is an HTTP call, so it does not care about filesystems at all —
+# it is the right fix for that class of problem rather than a workaround. Sonarr
+# and Radarr ship a purpose-built `PlexServer` connection that sends a PARTIAL
+# scan of just the affected path.
+#
+# KEEP THE SCHEDULED SCAN. This only fires for imports the *arr apps make. Files
+# copied in by hand or added by anything else still need the periodic sweep, so
+# the interval is relaxed rather than removed.
+
+# Which Plex serves — the same variable plex-primary.yml uses, so a failover
+# repoints these connections instead of leaving them aimed at a stopped server.
+plex_primary: plex-gpu
+
+plex_connect_name: "Plex — {{ plex_primary }}"
+plex_connect_port: 32400
+plex_connect_use_ssl: false
+
+# No mapFrom/mapTo. The downloader and Plex normally see different paths, which is
+# what those fields exist for — but /mnt/media is mounted at the SAME path on both
+# nodes by design (PET-311), so no translation is needed.
+plex_connect_map_from: ""
+plex_connect_map_to: ""
+
+# Fire on import, on upgrade, and on rename. Rename matters: a renamed file is a
+# new path to Plex, and without it the library keeps a stale entry.
+plex_connect_on_download: true
+plex_connect_on_upgrade: true
+plex_connect_on_rename: true
+
+# Per-app API port and config path, used to read each app's own API key.
+plex_connect_apps:
+  sonarr: { port: 8989, config: /var/lib/sonarr/config.xml }
+  radarr: { port: 7878, config: /var/lib/radarr/config.xml }

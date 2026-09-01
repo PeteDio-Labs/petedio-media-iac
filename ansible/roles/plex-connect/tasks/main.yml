@@ -1,0 +1,110 @@
+---
+- name: Resolve this app's settings
+  ansible.builtin.set_fact:
+    pc: "{{ plex_connect_apps[inventory_hostname] }}"
+
+- name: Read this app's own API key
+  ansible.builtin.slurp:
+    src: "{{ pc.config }}"
+  register: pc_cfg
+  no_log: true
+
+- name: Extract it
+  ansible.builtin.set_fact:
+    pc_key: "{{ (pc_cfg.content | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\\1') | first) }}"
+  no_log: true
+
+- name: Fail early if the key could not be read
+  ansible.builtin.assert:
+    that: pc_key | length > 10
+    fail_msg: "No usable ApiKey in {{ pc.config }} on {{ inventory_hostname }}."
+
+- name: Read the connections already configured
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    return_content: true
+  register: pc_existing
+  changed_when: false
+  no_log: true
+
+- name: Work out whether ours is already there
+  ansible.builtin.set_fact:
+    pc_current: >-
+      {{ (pc_existing.json | selectattr('implementation','equalto','PlexServer') | list | first) | default({}) }}
+
+# The payload Sonarr and Radarr both accept. `updateLibrary` is the field that
+# does the actual work — without it the connection exists and notifies nothing.
+- name: Build the connection definition
+  ansible.builtin.set_fact:
+    pc_body:
+      name: "{{ plex_connect_name }}"
+      implementation: PlexServer
+      implementationName: Plex Media Server
+      configContract: PlexServerSettings
+      onDownload: "{{ plex_connect_on_download }}"
+      onUpgrade: "{{ plex_connect_on_upgrade }}"
+      onRename: "{{ plex_connect_on_rename }}"
+      onGrab: false
+      onHealthIssue: false
+      supportsOnDownload: true
+      supportsOnUpgrade: true
+      supportsOnRename: true
+      tags: []
+      fields:
+        - { name: host, value: "{{ plex_host_ip }}" }
+        - { name: port, value: "{{ plex_connect_port }}" }
+        - { name: useSsl, value: "{{ plex_connect_use_ssl }}" }
+        - { name: authToken, value: "{{ plex_auth_token }}" }
+        - { name: updateLibrary, value: true }
+        - { name: mapFrom, value: "{{ plex_connect_map_from }}" }
+        - { name: mapTo, value: "{{ plex_connect_map_to }}" }
+
+- name: Create the Plex connection
+  when: pc_current == {}
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
+    method: POST
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    body_format: json
+    body: "{{ pc_body }}"
+    status_code: [200, 201]
+  no_log: true
+  register: pc_created
+
+- name: Update the existing connection so a failover repoints it
+  when: pc_current != {}
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification/{{ pc_current.id }}"
+    method: PUT
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    body_format: json
+    body: "{{ pc_body | combine({'id': pc_current.id}) }}"
+    status_code: [200, 202]
+  no_log: true
+  register: pc_updated
+  changed_when: >-
+    (pc_current.fields | selectattr('name','equalto','host') | map(attribute='value') | first | default('')) != plex_host_ip
+    or not (pc_current.fields | selectattr('name','equalto','updateLibrary') | map(attribute='value') | first | default(false))
+
+# A connection that exists but points nowhere useful is the failure mode here, so
+# prove it round-trips rather than trusting the POST returned 201.
+- name: Read it back
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    return_content: true
+  register: pc_verify
+  changed_when: false
+  no_log: true
+
+- name: Assert it is present, pointed at the primary, and set to update the library
+  ansible.builtin.assert:
+    that:
+      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | list | length) == 1
+      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | map(attribute='fields') | first
+         | selectattr('name','equalto','host') | map(attribute='value') | first) == plex_host_ip
+      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | map(attribute='fields') | first
+         | selectattr('name','equalto','updateLibrary') | map(attribute='value') | first) | bool
+    fail_msg: "The Plex connection on {{ inventory_hostname }} is missing, aimed elsewhere, or not set to update the library."
+    success_msg: "{{ inventory_hostname }} notifies {{ plex_primary }} at {{ plex_host_ip }} on import, upgrade and rename."

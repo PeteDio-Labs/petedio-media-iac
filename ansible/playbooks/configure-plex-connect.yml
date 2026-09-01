@@ -1,0 +1,57 @@
+---
+# configure-plex-connect.yml — Sonarr and Radarr tell Plex to scan the moment they
+# import, instead of Plex waiting up to 15 minutes for its next sweep. (PET-319)
+#
+# WHY. plex-gpu reads the library over NFS, and Plex's automatic detection is
+# built on inotify, which does not cross NFS — a file pve01 writes is never seen
+# by a watcher on pve02. A notification is an HTTP call, so it sidesteps the
+# filesystem entirely. Sonarr and Radarr ship a purpose-built PlexServer
+# connection that requests a PARTIAL scan of just the affected path.
+#
+#   ansible-playbook playbooks/configure-plex-connect.yml
+#
+# NO PATH MAPPING NEEDED. mapFrom/mapTo exist because the downloader and Plex
+# usually see different paths. Ours do not: /mnt/media is mounted at the SAME
+# path on both nodes by design (PET-311), and that decision pays off again here.
+#
+# THE TOKEN IS READ FROM THE RUNNING SERVER, not stored anywhere new. It already
+# lives in the primary's Preferences.xml; copying it into Vault would create a
+# second thing to rotate and a third place to leak it from.
+#
+# TARGET FOLLOWS plex_primary, the same variable plex-primary.yml uses, so a
+# failover repoints these connections rather than leaving them aimed at a server
+# that is deliberately stopped.
+
+- name: Read the current primary's token and address
+  hosts: "{{ plex_primary | default('plex-gpu') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read Preferences.xml
+      ansible.builtin.slurp:
+        src: "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml"
+      register: pc_prefs
+      no_log: true
+
+    - name: Extract the token
+      ansible.builtin.set_fact:
+        plex_auth_token: "{{ (pc_prefs.content | b64decode | regex_search('PlexOnlineToken=\"([^\"]+)\"', '\\1') | first) }}"
+        plex_host_ip: "{{ ansible_host }}"
+      no_log: true
+
+    - name: Fail early rather than writing an empty token into two apps
+      ansible.builtin.assert:
+        that: plex_auth_token | length > 10
+        fail_msg: "No PlexOnlineToken on {{ inventory_hostname }} — is the server claimed?"
+
+- name: Point Sonarr and Radarr at it
+  # lidarr is deliberately absent: it and the Music library are being removed in
+  # this same change, since neither is used.
+  hosts: sonarr:radarr
+  gather_facts: false
+  become: true
+  vars:
+    plex_auth_token: "{{ hostvars[plex_primary | default('plex-gpu')].plex_auth_token }}"
+    plex_host_ip: "{{ hostvars[plex_primary | default('plex-gpu')].plex_host_ip }}"
+  roles:
+    - plex-connect

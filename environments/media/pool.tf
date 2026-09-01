@@ -23,7 +23,6 @@
 
 locals {
   media_pool_members = var.manage_resource_pool ? {
-    lidarr          = module.lidarr.vm_id
     seerr           = module.seerr.vm_id
     plex            = module.plex.vm_id
     plex_gpu        = module.plex_gpu.vm_id

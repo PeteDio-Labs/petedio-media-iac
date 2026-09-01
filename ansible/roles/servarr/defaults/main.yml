@@ -1,8 +1,8 @@
-# servarr — shared defaults for sonarr / radarr / lidarr / prowlarr.
+# servarr — shared defaults for sonarr / radarr / prowlarr.
 # Per-host overrides live in inventory/host_vars/<app>.yml; the only two that
 # genuinely differ are the app name and the API version.
 ---
-# Lowercase app + systemd unit name (sonarr|radarr|lidarr|prowlarr).
+# Lowercase app + systemd unit name (sonarr|radarr|prowlarr).
 servarr_app: "{{ inventory_hostname }}"
 servarr_service: "{{ servarr_app }}"
 

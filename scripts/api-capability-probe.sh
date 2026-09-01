@@ -67,7 +67,6 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 # "sonarr: unbound variable", on the machine the usage block tells you to run this from.
 ip_for() {
   case "$1" in
-    lidarr)          echo 192.168.50.14  ;;
     seerr)           echo 192.168.50.33  ;;
     plex)            echo 192.168.50.140 ;;
     sonarr)          echo 192.168.50.15  ;;
@@ -78,8 +77,8 @@ ip_for() {
   esac
 }
 # *arr: port + API version. Lidarr/Prowlarr never moved off v1.
-arr_port() { case "$1" in sonarr) echo 8989 ;; radarr) echo 7878 ;; lidarr) echo 8686 ;; prowlarr) echo 9696 ;; esac; }
-arr_ver()  { case "$1" in sonarr|radarr) echo v3 ;; lidarr|prowlarr) echo v1 ;; esac; }
+arr_port() { case "$1" in sonarr) echo 8989 ;; radarr) echo 7878 ;; prowlarr) echo 9696 ;; esac; }
+arr_ver()  { case "$1" in sonarr|radarr) echo v3 ;; prowlarr) echo v1 ;; esac; }
 
 PASS=0; FAIL=0; SKIP=0
 declare -a NOTES=()
@@ -174,7 +173,7 @@ probe_arr() {
   esac
 }
 
-for h in sonarr radarr lidarr prowlarr; do probe_arr "$h"; done
+for h in sonarr radarr prowlarr; do probe_arr "$h"; done
 
 # ------------------------------------------------------------------- seerr --
 # Overseerr-lineage API: /api/v1, X-Api-Key. The key lives in settings.json.
