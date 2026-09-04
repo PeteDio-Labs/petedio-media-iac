@@ -58,7 +58,18 @@ locals {
   downloads_volume = "/mnt/downloads"
 }
 
-# seerr 101/.33 — sdb3-storage 12G, eth1-only (firewall on), NO bind-mounts
+# seerr 101/.33 — local 12G, eth1-only (firewall on), NO bind-mounts.
+#
+# ON pve03 SINCE 2026-09-04 (PET-334). seerr is a request UI, not a media path —
+# it holds no bind mounts and touches neither pool — so it belongs with the
+# platform tier. pve02 is now the media node and keeps only Plex and qBittorrent,
+# next to the disks.
+#
+# ⚠ target_node and datastore_id are set EXPLICITLY here, not from var.target_node,
+# because that variable still defaults to pve02 for the two guests that stay.
+# Changing either one does not move a container: both force REPLACEMENT on the bpg
+# provider. 101 was moved with `pct migrate --target-storage local` and its state
+# reconciled by import.
 module "seerr" {
   source = "../../modules/proxmox-lxc"
 
@@ -68,11 +79,11 @@ module "seerr" {
   cores            = 4
   memory_dedicated = 4096
   disk_size        = 12
-  datastore_id     = "local-lvm"
+  datastore_id     = "local" # pve03 has no thin pool; see PET-334
   firewall         = true
   interface_name   = "eth1" # seerr's only NIC is eth1 (not eth0)
   ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
+  target_node      = "pve03" # platform tier; pve02 keeps only Plex + qBittorrent
   description      = "Overseerr/Jellyseerr (requests). Media stack — managed by petedio-media-iac."
 }
 
