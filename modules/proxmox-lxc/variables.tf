@@ -63,7 +63,9 @@ variable "datastore_id" {
 variable "bridge" {
   description = "Primary network bridge. vmbr1 = LAN/uplink on pve01 (vmbr0 has no gateway, except the .86 mesh segment used by plex)."
   type        = string
-  default     = "vmbr1"
+  # ⚠ Was vmbr1 until 2026-09-04 — pve01's LAN bridge. pve02 and pve03 use
+  # vmbr0; on pve02 vmbr1 is the VXLAN bridge, which is not a LAN.
+  default     = "vmbr0"
 }
 
 variable "firewall" {
