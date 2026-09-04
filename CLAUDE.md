@@ -85,8 +85,12 @@ new work into PR descriptions no longer applies — file it in Plane instead.
 3. **Ground-truth before you trust docs.** The old Linear inventory doc was wrong
    about media VMID→role→IP (corrected 2026-06-04); it is now stranded in the
    retired workspace and drifting further, so prefer `vault/Hosts/hosts-inventory.md`.
-   Always `ssh root@192.168.50.10 'pct list && pct config <id>'` to confirm before
-   editing HCL. Same rule applies to this file.
+   Always confirm against the live cluster before editing HCL — `pct list && pct
+   config <id>`, or `/api2/json/cluster/resources?type=vm` for placement across
+   both nodes. Same rule applies to this file.
+   ⚠ **Not `192.168.50.10`.** That was pve01's address and now belongs to **pve03**,
+   which holds only sonarr/radarr/prowlarr. pve02 is `192.168.50.11` and carries
+   everything else. An address is not a name.
 4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key +
    addresses** go to `kv/services/media/qbittorrent`, read by a media-scoped policy —
    not committed, not in the shared `ansible` policy. Seed still pending;
@@ -96,6 +100,18 @@ new work into PR descriptions no longer applies — file it in Plane instead.
    the same secret is documented at **two paths** — `iac`'s seed script already
    populated `kv/services/qbittorrent`. Resolve before seeding; see
    `docs/runbooks/qbittorrent-vault-secret.md`.
+
+5. **Declare it, don't run it.** When a repair can be expressed as config, express
+   it as config — see workflow rule 6 in the workspace `CLAUDE.md`. `removed { …
+   lifecycle { destroy = false } }` replaces `terraform state rm` and **skips the
+   refresh**, which is what lets it forget a guest on a node that no longer
+   resolves; `import { to = … }` replaces `terraform import`; `moved` replaces a
+   rename-shaped `state mv`.
+   `scripts/tf-state-repoint-media.sh` is what is left after that test, and it
+   records verbatim what terraform refused: `removed` addresses a *resource*, never
+   one instance of a `for_each`, and it cannot be paired with `import` to repoint an
+   address the config still declares. Read those refusals before writing another
+   state script.
 
 ## bpg / Proxmox gotchas (carried from petedio-iac — honor verbatim)
 
