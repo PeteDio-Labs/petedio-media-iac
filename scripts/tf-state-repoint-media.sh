@@ -87,6 +87,19 @@ echo "state backed up to $BACKUP (serial $(python3 -c "import json;print(json.lo
 # only the state's idea of which node it sits on is wrong. rm + import corrects
 # that without touching the running guest.
 #
+# ⚠ THIS HALF CANNOT BE DECLARATIVE, and it is not for want of trying. Repointing
+# needs the row dropped and re-adopted, and terraform refuses to pair `removed`
+# with `import` for an address the config still declares:
+#
+#   Error: Removed resource still exists
+#   This statement declares that module.seerr.proxmox_virtual_environment_container.this
+#   was removed, but it is still declared in configuration.
+#
+# An `import` block cannot adopt over an existing row either. Doing it in config
+# would take two merges — one deleting five module blocks, one restoring them —
+# with five live containers unmanaged in between. A guarded, backed-up, idempotent
+# script run once is the better trade for a state corrupted by a dead node.
+#
 # Ground-truthed against /cluster/resources, not against the config:
 #   101 seerr, 110 qbittorrent-vpn        -> pve02
 #   104 sonarr, 105 radarr, 109 prowlarr  -> pve03  (moved there by PET-325)
@@ -100,14 +113,23 @@ module.prowlarr.proxmox_virtual_environment_container.this|pve03/109
 "
 
 # Rows for a guest that exists nowhere. plex 103 died with pve01, and Proxmox has
-# already dropped 103 from the `homelab` pool, so its membership row is a phantom
-# too. Both leave state by `state rm`, NOT by destroy: terraform cannot destroy a
-# guest on a node that does not resolve, and there is nothing left to destroy.
+# already dropped 103 from the `homelab` pool, so its membership row is a phantom.
+# It leaves state by `state rm`, NOT by destroy: terraform cannot destroy a guest
+# on a node that does not resolve, and there is nothing left to destroy.
 #
-# The matching config was removed alongside this script, so neither replans as a
-# create. The ordering guard above enforces that.
+# ⚠ ONLY THE MEMBERSHIP IS HERE. module.plex's own row is handled in config, by a
+# `removed` block in media.tf — the declarative form, reviewable in a PR. Prefer
+# that; see the IaC-over-hand-fixes rule in CLAUDE.md.
+#
+# The membership cannot follow it, because a `removed` block addresses a RESOURCE
+# and this is one INSTANCE of a for_each:
+#
+#   Resource address must be a resource (e.g. "test_instance.foo"), not a
+#   resource instance (e.g. "test_instance.foo[1]").
+#
+# Forgetting the whole `proxmox_pool_membership.media` resource would drop all six
+# surviving memberships and need six imports back, which is worse than one rm.
 GONE='
-module.plex.proxmox_virtual_environment_container.this
 proxmox_pool_membership.media["plex"]
 '
 
@@ -122,7 +144,7 @@ while IFS='|' read -r addr target; do
 done <<< "$EXISTS"
 
 echo
-echo "== dropping rows for guests that exist nowhere =="
+echo "== dropping the phantom pool membership for 103 =="
 while read -r addr; do
   [ -z "$addr" ] && continue
   echo "  $addr"
