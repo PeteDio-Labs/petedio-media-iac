@@ -1,3 +1,38 @@
+# ── Placement after the 2026-09-03 loss of pve01 ──────────────────────────────
+#
+# The library lives on pve02 as local ZFS: `media` (RAIDZ1, four USB SSDs) and
+# `downloads` (one SSD). pve02 exports both to pve03 over NFS.
+#
+# WHO SITS WHERE, AND WHY
+#
+#   pve03   sonarr, radarr, prowlarr
+#           The arr apps write imports as bulk sequential copies on a schedule,
+#           which tolerates the network fine. Moving them means the library and
+#           the applications that write to it no longer share a host.
+#
+#   pve02   plex-gpu, qbittorrent-vpn, seerr
+#           Plex STAYS WITH THE DISKS. Playback is latency-sensitive and
+#           read-heavy, and inotify does not cross NFS -- putting Plex on the
+#           far side would cost filesystem-event scanning, which going local
+#           just won back. qBittorrent stays for a different reason: it writes
+#           torrent pieces in random order, which is the worst workload to put
+#           over NFS.
+#
+# The tempting version of this split moves PLEX to pve03 for its Iris Xe Quick
+# Sync. That puts the streaming path over NFS to gain transcode headroom the
+# 1080p library does not need, and rebuilds the cross-node coupling that made
+# pve02 collateral damage when pve01 died. Don't.
+#
+# ⚠ pve03 HAS NO LVM THIN POOL. It was installed as plain Debian on ext4, so its
+# container store is the `local` directory, not `local-lvm`. A guest declared
+# for pve03 with local-lvm fails at migration with "storage does not support CT
+# rootdirs" -- after copying the disk.
+#
+# ⚠ MOUNT POINTS NEED shared=1 TO MIGRATE. Proxmox refuses to move a container
+# with a local bind mount, because it cannot verify the host path exists on the
+# target. Both nodes genuinely have /mnt/media and /mnt/downloads now, so the
+# flag is true rather than a lie to get past the check.
+
 # Media stack — brownfield capture (PET-46). One module block per RUNNING LXC,
 # encoding each host's REAL shape (ground-truthed off pve01 via `pct config`,
 # 2026-06-04) so `terraform import` + `plan` is a clean no-op (zero drift).
@@ -33,7 +68,7 @@ module "seerr" {
   cores            = 4
   memory_dedicated = 4096
   disk_size        = 12
-  datastore_id     = "sdb3-storage"
+  datastore_id     = "local-lvm"
   firewall         = true
   interface_name   = "eth1" # seerr's only NIC is eth1 (not eth0)
   ssh_public_key   = var.ssh_public_key
@@ -194,10 +229,10 @@ module "sonarr" {
   cores            = 2
   memory_dedicated = 1024
   disk_size        = 4
-  datastore_id     = "sdb3-storage"
+  datastore_id     = "local"
   ipv6_auto        = true # created with ip6=auto
   ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
+  target_node      = "pve03"
   description      = "Sonarr (TV). Media stack — managed by petedio-media-iac."
 
   mount_points = [
@@ -216,10 +251,10 @@ module "radarr" {
   cores            = 2
   memory_dedicated = 1024
   disk_size        = 4
-  datastore_id     = "sdb3-storage"
+  datastore_id     = "local"
   ipv6_auto        = true # created with ip6=auto
   ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
+  target_node      = "pve03"
   description      = "Radarr (movies). Media stack — managed by petedio-media-iac."
 
   mount_points = [
@@ -238,9 +273,9 @@ module "prowlarr" {
   cores            = 1
   memory_dedicated = 1024
   disk_size        = 4
-  datastore_id     = "local-lvm"
+  datastore_id     = "local"
   ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
+  target_node      = "pve03"
   description      = "Prowlarr (indexers). Media stack — managed by petedio-media-iac."
 
   mount_points = [

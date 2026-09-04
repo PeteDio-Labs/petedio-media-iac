@@ -18,7 +18,10 @@ variable "proxmox_api_token" {
 variable "target_node" {
   description = "Proxmox node where these resources live."
   type        = string
-  default     = "pve01"
+  # pve01 was removed from the cluster after its RAID controller failed on
+  # 2026-09-03. Leaving this pointed at a node that does not resolve makes every
+  # plan die at refresh with a hostname lookup error.
+  default = "pve02"
 }
 
 variable "ssh_public_key" {
