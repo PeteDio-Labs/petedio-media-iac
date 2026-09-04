@@ -85,9 +85,26 @@ module "seerr" {
 # bridge and the "LAN" address on a VXLAN. plex-gpu below carries the warning in
 # full. The library it served is gone too — 2.6 TB, see the vault incident note.
 #
-# plex-gpu 236 is the Plex now. 103 leaves state via `state rm`, never a destroy:
-# terraform cannot destroy a guest on a node that no longer resolves, and there is
-# nothing left to destroy. scripts/tf-state-repoint-media.sh does it.
+# plex-gpu 236 is the Plex now.
+#
+# The `removed` block below is what takes 103 out of state, and it is load-bearing
+# rather than tidy-up: with the module gone from config and the row still in state,
+# terraform plans a DESTROY, which the plan gate refuses and which would in any case
+# try to reach a node that does not resolve. `destroy = false` means forget, not
+# delete — there is nothing left to delete.
+#
+# It also SKIPS THE REFRESH for this resource, which is the only reason it works
+# here. A plain destroy or a state read would fail on `hostname lookup 'pve01'`.
+# Verified: with this block in place the plan reports "will no longer be managed by
+# Terraform, but will not be destroyed" and module.plex never appears in the refresh
+# list at all.
+removed {
+  from = module.plex.proxmox_virtual_environment_container.this
+
+  lifecycle {
+    destroy = false
+  }
+}
 
 # plex-gpu 236/.236 — the SECOND Plex, on pve02, for hardware transcoding.
 #
