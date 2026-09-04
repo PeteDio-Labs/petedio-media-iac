@@ -2,11 +2,20 @@ variable "proxmox_endpoint" {
   description = <<-EOT
     Proxmox API endpoint (https://<node>:8006/). bpg/proxmox reads the PVE
     version from this endpoint and conditionally sends version-gated fields, so
-    target the node where the resources actually live (pve01 9.1.x — all media
-    LXCs live there).
+    target the node where the resources actually live — pve02 9.2.x, which
+    carries four of the six remaining media guests and every other homelab LXC.
+
+    ⚠ This was https://192.168.50.10:8006/ until 2026-09-04, and the text above
+    it still said "pve01 — all media LXCs live there". That address was pve01's
+    and now belongs to pve03, so the old default aimed the provider at a
+    different machine than the one holding most of the state. petedio-iac
+    corrected its copy on 2026-09-04; this one was missed (PET-332).
+
+    Both nodes run 9.2.11 today, so nothing version-gated diverged. That is
+    luck, not design — an address is not a name.
   EOT
   type        = string
-  default     = "https://192.168.50.10:8006/"
+  default     = "https://192.168.50.11:8006/"
 }
 
 variable "proxmox_api_token" {

@@ -76,82 +76,78 @@ module "seerr" {
   description      = "Overseerr/Jellyseerr (requests). Media stack — managed by petedio-media-iac."
 }
 
-# plex 103 — DUAL-HOMED: net0 vmbr0/86.140 (mesh, gw .86.1) + net1 vmbr1/.140.
-# local-lvm 16G, firewall on both NICs. downloads bind-mount is read-only.
+# plex 103 — REMOVED. The container died with pve01 on 2026-09-03 and does not
+# exist on any node; Proxmox has already dropped 103 from the `homelab` pool.
 #
-# Memory is 4096, raised from 2048: the old cap peaked at 2035 MiB (99%) and
-# reached into swap. Plex's WAN upload ceilings now sit at the real 3 Mbps
-# uplink, so remote streams transcode instead of direct playing, and a
-# transcode costs more memory than a pass-through. Those ceilings live in the
-# Plex app, not here — see the vault note before assuming this file explains
-# the whole change.
-module "plex" {
-  source = "../../modules/proxmox-lxc"
+# DO NOT RE-ADD IT BY UNCOMMENTING. Its declaration was written for pve01, where
+# vmbr0 was the .86 mesh and vmbr1 was the .50 LAN. Those numbers are INVERTED on
+# pve02, so recreating this block anywhere else puts the "mesh" address on the LAN
+# bridge and the "LAN" address on a VXLAN. plex-gpu below carries the warning in
+# full. The library it served is gone too — 2.6 TB, see the vault incident note.
+#
+# plex-gpu 236 is the Plex now.
+#
+# The `removed` block below is what takes 103 out of state, and it is load-bearing
+# rather than tidy-up: with the module gone from config and the row still in state,
+# terraform plans a DESTROY, which the plan gate refuses and which would in any case
+# try to reach a node that does not resolve. `destroy = false` means forget, not
+# delete — there is nothing left to delete.
+#
+# It also SKIPS THE REFRESH for this resource, which is the only reason it works
+# here. A plain destroy or a state read would fail on `hostname lookup 'pve01'`.
+# Verified: with this block in place the plan reports "will no longer be managed by
+# Terraform, but will not be destroyed" and module.plex never appears in the refresh
+# list at all.
+removed {
+  from = module.plex.proxmox_virtual_environment_container.this
 
-  vm_id            = 103
-  hostname         = "plex"
-  ipv4_address     = "192.168.86.140/24"
-  gateway          = "192.168.86.1"
-  bridge           = "vmbr0"
-  firewall         = true
-  net1_address     = "192.168.50.140/24"
-  net1_gateway     = "192.168.50.1" # plex's LAN NIC carries the .50 gateway
-  net1_bridge      = "vmbr1"
-  net1_firewall    = true
-  cores            = 4
-  memory_dedicated = 4096
-  memory_swap      = 2048
-  disk_size        = 16
-  datastore_id     = "local-lvm"
-  ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
-  description      = "Plex (also mesh shares on .86). Media stack — managed by petedio-media-iac."
-
-  # downloads is mounted read-only on plex.
-  mount_points = [
-    { volume = local.media_volume, path = "/mnt/media" },
-    { volume = local.downloads_volume, path = "/mnt/downloads", read_only = true },
-  ]
+  lifecycle {
+    destroy = false
+  }
 }
 
 # plex-gpu 236/.236 — the SECOND Plex, on pve02, for hardware transcoding.
 #
-# WHY A SECOND SERVER AND NOT A MOVE. plex (103) stays exactly as it is on
-# pve01. Two Plex servers each need their own identity: copying 103's database
-# would hand both the same machine identifier and they would fight over the same
-# entry on plex.tv. So this is a fresh install that scans the same library, and
-# 103 is untouched and always rollback-ready.
+# WHY IT EXISTS. It was built as a SECOND Plex alongside 103 on pve01, for Quick
+# Sync: pve01's two Xeon E5-2690 v2 have no integrated GPU, so every transcode
+# there was software, while pve02's i5-6500T has Quick Sync at
+# /dev/dri/renderD128, passed through below. Two Plex servers each need their own
+# identity, so this was a fresh install scanning the same library rather than a
+# copy of 103's database, which would have made both fight over one plex.tv entry.
 #
-# WHY pve02. pve01's two Xeon E5-2690 v2 have no integrated GPU, so every
-# transcode there is software. pve02's i5-6500T has Quick Sync at
-# /dev/dri/renderD128, passed through below. The media stays on pve01 and is
-# read over NFS (petedio-iac: ansible/playbooks/configure-media-share.yml),
-# because a 4K remux needs well under a gigabit while transcoding is what
-# actually saturates a CPU.
+# It is now the ONLY Plex — 103 died with pve01 on 2026-09-03, and the rollback
+# this design preserved no longer exists. The library is local ZFS on pve02
+# (`media`, RAIDZ1) rather than NFS from pve01.
 #
 # ⚠ THE BRIDGE NUMBERS ARE INVERTED BETWEEN THE NODES. Do NOT copy 103's values.
-#     pve01:  vmbr0 = .86 mesh    vmbr1 = .50 LAN
-#     pve02:  vmbr0 = .50 LAN     (no second bridge yet)
-# So this container's LAN bridge is vmbr0 — the OPPOSITE of plex 103, which uses
-# vmbr1 for its .50 leg. A container placed on the wrong bridge cannot reach its
-# gateway. petedio-iac's runner.tf carries the same warning for runner-233.
+#     pve01:  vmbr0 = .86 mesh    vmbr1 = .50 LAN          (node is gone)
+#     pve02:  vmbr0 = .50 LAN     vmbr1 = vxlan86, dead     (see below)
+# So this container's LAN bridge is vmbr0 — the OPPOSITE of what plex 103 used,
+# where vmbr1 carried the .50 leg. A container placed on the wrong bridge cannot
+# reach its gateway. petedio-iac's runner.tf carries the same warning for
+# runner-233.
 #
-# THE .86 LEG RIDES A TUNNEL, NOT A CABLE. Plex clients live on the .86 Google
-# mesh, and .86 -> .50 does not route (the .50 network is NATed behind .86).
-# pve02 has ONE physical NIC, on .50, so it has no physical path to the mesh and
-# no second NIC was available.
+# NO .86 MESH LEG — IT WAS REMOVED, AND IT MUST NOT COME BACK (PET-332).
 #
-# Instead, a VXLAN carries mesh layer-2 across the existing .50 cable to pve01,
-# which IS cabled to the mesh, and pve01 bridges the tunnel into its own mesh
-# bridge. pve02 gets vmbr1 backed by that tunnel, and this container holds a real
-# 192.168.86.236 with native client discovery — no NAT and no proxy. Set up in
-# /etc/network/interfaces on both nodes; see the PET-311 runbook.
+# This container used to hold a real 192.168.86.236 on vmbr1 for native Plex
+# client discovery. vmbr1 on pve02 is not a NIC: it is backed by `vxlan86`, a
+# VXLAN that carried mesh layer-2 across the .50 cable to pve01 — the ONLY node
+# cabled to the .86 mesh — which bridged it into its own mesh bridge.
 #
-# NO net1_gateway ON PURPOSE. The default route stays on the .50 leg so the NFS
-# media path from pve01 is unchanged; .86 is reached as a directly-connected
-# route. Giving this leg a gateway too would install a second default route.
+# pve01 died on 2026-09-03. pve03 has no mesh bridge and no VXLAN, only vmbr0 on
+# .50 and the wlo1 escape hatch, so nothing terminates that tunnel any more. The
+# live container has already lost its eth1. Re-declaring it would bring up an
+# interface on a tunnel with nothing at the far end, and terraform would report
+# success — which is exactly what it did on every merge from 2026-09-03 to
+# 2026-09-04: `Plan: 0 to add, 1 to change, 0 to destroy`, forever.
 #
-# net1_mtu = 1450 is load-bearing: VXLAN spends 50 of the underlay's 1500 bytes.
+# ⚠ pve03 now holds pve01's old address, 192.168.50.10. If vxlan86's remote is
+# configured by IP rather than by name, that tunnel now points at pve03 — a
+# different machine that is not on the mesh. Check before reviving any of this.
+#
+# Plex is reached three other ways and needs none of this: the tailnet
+# (100.97.96.88, depends on nothing else), the pete-pi-1 proxy
+# (192.168.86.46:32400), and 192.168.50.236 on the LAN.
 #
 # WHY 236 AND NOT A 1xx. The 1xx block is the pve01 media stack. This server runs
 # on pve02, so it follows the convention every non-media service uses: a 2xx VMID
@@ -179,13 +175,6 @@ module "plex_gpu" {
 
   ssh_public_key = var.ssh_public_key
   description    = "Plex #2 on pve02, Quick Sync hardware transcoding. Media stack — managed by petedio-media-iac."
-
-  # The mesh leg. vmbr1 on pve02 is the VXLAN-backed bridge, NOT a physical NIC —
-  # and note this is the opposite of plex 103, where vmbr1 is the .50 LAN.
-  net1_bridge   = "vmbr1"
-  net1_address  = "192.168.86.236/24"
-  net1_firewall = true
-  net1_mtu      = 1450
 
   # NO device_passthrough HERE, for the same reason there are no mount_points:
   # adding a host device to an unprivileged LXC is root@pam-only, and the
@@ -311,7 +300,6 @@ output "media_vm_ids" {
   description = "VMIDs of the captured media containers."
   value = {
     seerr           = module.seerr.vm_id
-    plex            = module.plex.vm_id
     plex_gpu        = module.plex_gpu.vm_id
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
