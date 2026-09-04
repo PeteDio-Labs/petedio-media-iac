@@ -42,6 +42,13 @@ on:
       - docs/**
       - scripts/**
       - ansible/**
+  # Re-run plan+apply without a commit. Needed whenever state changes OUT OF BAND
+  # and no push follows it — the case that motivated this is a state repair run
+  # from scripts/, which `paths-ignore` deliberately excludes, so merging the
+  # repair could never trigger the apply that proves it worked (PET-332).
+  # Without this the only options were a no-op commit or an apply by hand, and
+  # applying by hand is the thing the whole workflow exists to prevent.
+  workflow_dispatch: {}
 
 # Serialize media-iac runs: the MinIO state backend has no locking (backend.tf), so concurrent
 # applies racing the same state file is a footgun. cancel-in-progress: false queues instead of
