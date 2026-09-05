@@ -64,7 +64,39 @@ services:
         condition: service_healthy
     environment:
       PUID: "1000"
-      PGID: "1000"
+      # ⚠ PGID 0, NOT 1000, and that is not a typo (PET-336).
+      #
+      # LinuxServer images chown their mounted volumes to PUID:PGID on every
+      # start. With PGID 1000 that rewrote /mnt/downloads to 101000:101000 on the
+      # host — moving the pool root OUT of the group the arr apps are in, so they
+      # lost write access to it the moment this container was recreated. It fails
+      # silently: everything BELOW the root keeps the right group, so the damage
+      # is one directory deep and every service still answers.
+      #
+      # The apps run as root in their own containers, which is gid 0 → 100000 on
+      # the host, and the download tree has always been group 100000. Files here
+      # are already uid 1000 / gid 0 because the setgid bit forces it. PGID 0 just
+      # makes this container agree with the layout instead of fighting it — and
+      # makes the startup chown self-healing rather than destructive.
+      PGID: "0"
+      # ⚠ LOAD-BEARING: without this the arr apps cannot import (PET-336).
+      #
+      # An import is a MOVE, and a move needs write permission on the CONTAINING
+      # DIRECTORY, not on the file. With no UMASK, LinuxServer images fall back to
+      # 0022 and qBittorrent creates each release directory `drwxr-sr-x` — owner
+      # write only. qBittorrent owns them as uid 1000 (host 101000); Radarr and
+      # Sonarr run as root in their containers (host 100000). The setgid bit on
+      # /mnt/downloads does propagate the group correctly, but a group with r-x
+      # cannot unlink.
+      #
+      # The result reads as a bad release rather than a permissions fault:
+      #   System.UnauthorizedAccessException: Access to the path '...mkv' is denied
+      #   ---> System.IO.IOException: Permission denied
+      #        at DiskTransferService.TryMoveFileVerified(...)
+      # The app can read the file and write the destination, and still fail.
+      #
+      # 002 makes new directories drwxrwsr-x, which the shared group can unlink in.
+      UMASK: "002"
       TZ: America/Los_Angeles
       WEBUI_PORT: "8080"
       # Drop in VueTorrent (modern dark UI) via the official LSIO mod
