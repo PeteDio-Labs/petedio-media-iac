@@ -178,7 +178,7 @@ export AWS_ACCESS_KEY_ID=...   AWS_SECRET_ACCESS_KEY=...   # MinIO
 
 terraform init
 # import the running LXCs (state-only — does NOT touch the containers):
-terraform import 'module.sonarr.proxmox_virtual_environment_container.this' pve01/104
+terraform import 'module.sonarr.proxmox_virtual_environment_container.this' pve03/104
 # ... repeat per host ...
 terraform plan          # GOAL: clean no-op (zero drift) → capture proven
 ```

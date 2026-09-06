@@ -17,8 +17,12 @@
 # This stops services, not containers — the LXCs stay up so `stack-up.yml` is
 # near-instant. To power the containers off entirely, use stack-power.yml.
 ---
-- name: Media stack down — 1/4 user-facing (plex, seerr)
-  hosts: plex,seerr
+# plex-gpu (236), not plex (103): 103 died with pve01 on 2026-09-03 and 236 is the
+# only Plex. Retargeted in PET-354 — the old value matched no host, and Ansible
+# skips an unmatched pattern with a warning, so the stack reported a clean
+# shutdown while Plex kept running.
+- name: Media stack down — 1/4 user-facing (plex-gpu, seerr)
+  hosts: plex-gpu,seerr
   gather_facts: false
   vars:
     media_lifecycle_state: stopped

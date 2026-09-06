@@ -39,8 +39,10 @@
   roles:
     - media-lifecycle
 
-- name: Media stack up — 4/4 user-facing (seerr, plex)
-  hosts: seerr,plex
+# plex-gpu (236), not plex (103) — see the note in stack-down.yml. Retargeted in
+# PET-354; before that, stack-up never started Plex.
+- name: Media stack up — 4/4 user-facing (seerr, plex-gpu)
+  hosts: seerr,plex-gpu
   gather_facts: false
   vars:
     media_lifecycle_state: started

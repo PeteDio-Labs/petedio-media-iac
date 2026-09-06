@@ -19,11 +19,19 @@
   roles:
     - servarr
 
-- name: Plex
-  hosts: plex
-  gather_facts: false
-  roles:
-    - plex
+# ⚠ DISABLED, NOT DELETED — this play has no host (PET-354).
+# It applied the `plex` role to plex (103), which died with pve01 on 2026-09-03.
+# The only Plex is plex-gpu (236), and it is NOT a drop-in target: 103 was captured
+# in place by the `plex` role, while 236 is built by bootstrap-plex-gpu.yml. Whether
+# the `plex` role can assert 236 without fighting that bootstrap is an open question,
+# so retargeting it is a decision, not a rename. Until it is answered, `hosts: plex`
+# would silently match nothing and report success — the failure mode this audit was
+# convened to remove. Left commented so the omission is visible.
+# - name: Plex
+#   hosts: plex-gpu
+#   gather_facts: false
+#   roles:
+#     - plex
 
 - name: Seerr
   hosts: seerr

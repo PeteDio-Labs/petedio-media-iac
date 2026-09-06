@@ -3,7 +3,7 @@
 # Deliberately service-level, not container-level. Stopping the systemd unit (or
 # the compose project) is fast, graceful, and leaves the LXC up so the next start
 # is instant. Use stack-power.yml when you want the containers themselves off to
-# reclaim RAM on pve01.
+# reclaim RAM on their node — which is two nodes now, not one (PET-334).
 ---
 - name: "{{ inventory_hostname }} — check whether it is in use before stopping"
   when:

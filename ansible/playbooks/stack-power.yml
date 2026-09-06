@@ -1,5 +1,5 @@
 # Power the media LXCs themselves off/on at the Proxmox level, to actually
-# reclaim RAM and CPU on pve01 (stack-down.yml only stops services; the
+# reclaim RAM and CPU on their node (stack-down.yml only stops services; the
 # containers keep their memory).
 #
 #   cd ansible
@@ -31,28 +31,52 @@
   when: power == 'off'
 
 - name: Power the containers
-  hosts: pve01
+  hosts: localhost
   gather_facts: false
   vars:
-    # VMIDs of the seven captured media LXCs. Order mirrors stack-down/up:
-    # shut down consumers first, boot producers first.
-    media_vmids_shutdown_order: [103, 101, 104, 105, 100, 109, 110]
-    media_vmids_boot_order: [110, 109, 100, 105, 104, 101, 103]
+    # vmid -> node, ground-truthed against /cluster/resources 2026-09-06 (PET-354).
+    #
+    # ⚠ WHY THIS IS A MAP AND NOT A LIST OF VMIDs ON ONE HOST.
+    # Until PET-354 this play was `hosts: pve01` looping the VMIDs [103, 101, 104,
+    # 105, 100, 109, 110]. Three things had gone wrong with that:
+    #   - pve01 does not exist. Its address, 192.168.50.10, answers as pve03 now,
+    #     so the play ran against a node it did not name.
+    #   - 110 (qbittorrent-vpn) lives on pve02, so `pct shutdown 110` on pve03
+    #     failed and the DOWNLOADER STAYED UP through every power-off. The play
+    #     reported success because the failed_when clause forgives a non-zero rc.
+    #   - 103 (plex) and 100 (lidarr) no longer exist at all, and 236 (plex-gpu,
+    #     the only Plex) was never in the list, so Plex was never powered either.
+    # The stack has spanned two nodes since PET-334; a single-node loop cannot
+    # express it. Ordering still matters across nodes, so this is one ordered
+    # loop with each item delegated to its own node.
+    #
+    # Order mirrors stack-down/up: shut consumers down first, boot producers first.
+    media_power_shutdown_order:
+      - { vmid: 236, node: pve02 }   # plex-gpu    — consumer
+      - { vmid: 101, node: pve03 }   # seerr       — consumer
+      - { vmid: 104, node: pve03 }   # sonarr      — importer
+      - { vmid: 105, node: pve03 }   # radarr      — importer
+      - { vmid: 109, node: pve03 }   # prowlarr    — indexer
+      - { vmid: 110, node: pve02 }   # qbittorrent — downloader
   tasks:
     - name: Stop the media containers
-      ansible.builtin.command: "pct shutdown {{ item }} --timeout 120"
-      loop: "{{ media_vmids_shutdown_order }}"
+      ansible.builtin.command: "pct shutdown {{ item.vmid }} --timeout 120"
+      delegate_to: "{{ item.node }}"
+      loop: "{{ media_power_shutdown_order }}"
       when: power == 'off'
       register: pct_stop
       changed_when: pct_stop.rc == 0
       # A container that is already stopped exits non-zero; that is success here.
+      # It does NOT forgive "does not exist" — that means this map is stale, and
+      # a stale map is exactly the failure PET-354 found. Fail on it.
       failed_when:
         - pct_stop.rc != 0
         - "'not running' not in (pct_stop.stderr | default('') | lower)"
 
     - name: Start the media containers
-      ansible.builtin.command: "pct start {{ item }}"
-      loop: "{{ media_vmids_boot_order }}"
+      ansible.builtin.command: "pct start {{ item.vmid }}"
+      delegate_to: "{{ item.node }}"
+      loop: "{{ media_power_shutdown_order | reverse | list }}"
       when: power == 'on'
       register: pct_start
       changed_when: pct_start.rc == 0
@@ -60,14 +84,18 @@
         - pct_start.rc != 0
         - "'already running' not in (pct_start.stderr | default('') | lower)"
 
-    - name: Report container states
+- name: Report container states on both nodes
+  hosts: proxmox
+  gather_facts: false
+  tasks:
+    - name: Read container states
       ansible.builtin.command: "pct list"
       register: pct_list
       changed_when: false
 
     - name: Show media container states
       ansible.builtin.debug:
-        msg: "{{ pct_list.stdout_lines | select('search', '(100|101|103|104|105|109|110)') | list }}"
+        msg: "{{ pct_list.stdout_lines | select('search', '(101|104|105|109|110|236)') | list }}"
 
 # Containers need a moment for sshd before Ansible can reach them; stack-up's
 # per-tier port waits absorb the rest.

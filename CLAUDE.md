@@ -120,18 +120,40 @@ new work into PR descriptions no longer applies — file it in Plane instead.
   `features` in `lifecycle.ignore_changes`.
 - **Import never round-trips** `template_file_id`, `features`, `user_account` —
   all three are in `ignore_changes` or every plan shows phantom drift.
-- **`vmbr1` is the LAN bridge on pve01; `vmbr0` has no gateway** — EXCEPT plex,
-  which is genuinely on the `.86` mesh segment via vmbr0 (a different NIC). Capture
-  plex as dual-homed (net0 vmbr0/.86 + net1 vmbr1/.50).
-- **Target the pve01 endpoint** (`https://192.168.50.10:8006/`) — all media LXCs live there.
+- **`vmbr0` is the LAN bridge on pve02 and pve03, and it carries the gateway.**
+  ⚠ This is INVERTED from the pve01 rule that stood here until PET-354, which said
+  `vmbr1` was the LAN bridge and `vmbr0` had no gateway. That was true of pve01 and
+  is false of both surviving nodes: pve02's `vmbr0` holds `192.168.50.11/24` with
+  `gateway 192.168.50.1`, and its `vmbr1` is `manual` — the dead VXLAN leg that used
+  to carry the `.86` mesh to pve01. pve03 has `vmbr0` and a WiFi leg, no `vmbr1` at
+  all. Put a new guest on `vmbr1` on the strength of the old note and it comes up
+  with no route.
+- **Point the provider at a node that exists.** Both run 9.2.11, so either answers;
+  the default is `https://192.168.50.11:8006/` (pve02). Not `192.168.50.10` under
+  the name pve01 — that address is pve03's now.
+- **The stack spans both nodes** (PET-334), so no single node "has all the media
+  LXCs": pve03 holds seerr/sonarr/radarr/prowlarr, pve02 holds qbittorrent-vpn and
+  plex-gpu. Every guest sets `target_node` explicitly in `media.tf` for this reason.
 - See `docs/GOTCHAS.md` for the full list + media-specific notes.
 
 ## Hosts
 
-lidarr 100/.14 · seerr 101/.33 (sdb3, eth1-only, no mounts) · plex 103 (dual-homed,
-downloads ro) · sonarr 104/.15 (sdb3) · radarr 105/.16 (sdb3) · prowlarr 109/.20 ·
-qbittorrent-vpn 110/.21 (Gluetun/Proton). **filebrowser 102 is gone** — decommissioned
-under PET-82.
+Ground-truthed against `/cluster/resources` on 2026-09-06 (PET-354).
+
+**pve03** (`192.168.50.10`) — seerr 101/.33 (eth1-only, no mounts) · sonarr 104/.15 ·
+radarr 105/.16 · prowlarr 109/.20, plus flaresolverr 102/.150 (DHCP, unmanaged) and
+the platform tier.
+**pve02** (`192.168.50.11`) — qbittorrent-vpn 110/.21 (Gluetun/Proton) ·
+plex-gpu 236/.236 (Quick Sync; also tailnet `100.97.96.88`).
+
+Gone, do not re-add: **plex 103/.140** died with pve01 on 2026-09-03 and was not
+rebuilt — plex-gpu 236 is the only Plex, and there is no cold spare. **lidarr 100/.14**
+removed under PET-319. **filebrowser 102** decommissioned under PET-82 — but the VMID
+was reused and 102 is flaresolverr now, so "102 is gone" is true of the app and false
+of the number.
+
+`sdb3-storage` was pve01's and is `disabled` in `pvesm status`; the rootfs-datastore
+variance it caused no longer applies to the rebuilt guests.
 
 The old "110 is also in the retired homelab-infra TF — reconcile" caveat is
 **resolved** (2026-08-11): the `tfstate` bucket holds exactly three objects and
