@@ -22,8 +22,11 @@
 #   apply strips them. Same split as features/nesting — see petedio-iac
 #   docs/GOTCHAS.md and its scripts/lxc-features-*.sh.
 #
-# WHAT IT SETS (mounts use identical paths to plex 103, which is what makes the
-# library node-independent — /mnt/media is NFS from pve01 on this node):
+# WHAT IT SETS (mounts use identical paths on every node, which is what makes the
+# library node-independent — and is why PET-334 could move guests between nodes
+# without editing a mount. On pve02, where 236 lives, /mnt/media is the LOCAL ZFS
+# pool; pve03 reaches the same path over NFS. It read "NFS from pve01" until
+# PET-354, which was true when 103 still existed and the disks were elsewhere):
 #
 #     mp0:      /mnt/media      -> /mnt/media       read-write
 #     mp1:      /mnt/downloads  -> /mnt/downloads   read-only

@@ -2,10 +2,12 @@
 # configure-plex-connect.yml — Sonarr and Radarr tell Plex to scan the moment they
 # import, instead of Plex waiting up to 15 minutes for its next sweep. (PET-319)
 #
-# WHY. plex-gpu reads the library over NFS, and Plex's automatic detection is
-# built on inotify, which does not cross NFS — a file pve01 writes is never seen
-# by a watcher on pve02. A notification is an HTTP call, so it sidesteps the
-# filesystem entirely. Sonarr and Radarr ship a purpose-built PlexServer
+# WHY. Plex's automatic detection is built on inotify, which does not cross NFS.
+# When this was written, plex-gpu was the NFS client reading a library on pve01.
+# Since the rebuild pve02 holds the ZFS pools and plex-gpu is on pve02, so it
+# reads locally and sonarr/radarr on pve03 are the NFS writers — the direction
+# flipped, the conclusion did not. A notification is an HTTP call, so it sidesteps
+# the filesystem entirely either way. Sonarr and Radarr ship a purpose-built PlexServer
 # connection that requests a PARTIAL scan of just the affected path.
 #
 #   ansible-playbook playbooks/configure-plex-connect.yml

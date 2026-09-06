@@ -3,9 +3,13 @@
 # instead of waiting for the next scheduled sweep.
 #
 # WHY THIS EXISTS. plex-gpu (236) reads the library over NFS, and Plex's automatic
-# detection is built on inotify, which does not cross NFS: a file pve01 writes is
-# never seen by a watcher on pve02. Scheduled scanning was the workaround, and it
-# means up to 15 minutes between a download finishing and it appearing.
+# detection is built on inotify, which does not cross NFS. When this was written,
+# 236 was the NFS client reading a library held on pve01 and saw nothing change.
+# Since the rebuild the direction is reversed — pve02 holds the ZFS pools and 236
+# is on pve02, so it reads locally while sonarr/radarr on pve03 are the NFS
+# writers — but the conclusion is unchanged, because a scan driven over HTTP does
+# not care either way. Scheduled scanning was the workaround, and it means up to
+# 15 minutes between a download finishing and it appearing.
 #
 # A notification is an HTTP call, so it does not care about filesystems at all —
 # it is the right fix for that class of problem rather than a workaround. Sonarr

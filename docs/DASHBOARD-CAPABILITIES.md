@@ -1,6 +1,8 @@
 # Media dashboard — API capability review
 
-**Status:** review only. Nothing is being built yet.
+**Status:** review re-grounded against the post-rack-2.0 cluster on **2026-09-06**
+(PET-354). The design is confirmed and Phase 0 is unblocked; build work is tracked
+in the three sprint items PET-354 hands off to.
 **Companion:** [DASHBOARD-BACKEND.md](DASHBOARD-BACKEND.md) — how the thing that calls
 these APIs would actually be built (runtime, credentials, collector, storage, deployment).
 **Question asked:** can we get one surface that (1) traces a seerr request through
@@ -62,6 +64,51 @@ Four things the run changed, each of which had been asserted here and was wrong:
 > meant it had never run anywhere, and a `jq -R` wrapper was reporting a green YES
 > for the body `Forbidden`. Both fixed. The lesson is the repo's own first golden
 > rule — ground-truth before docs, and *run the thing that does the ground-truthing.*
+
+### Re-probe 2026-09-06 — 35 answered · 1 did not · 1 skipped (PET-354)
+
+**The capability surface survived the rack loss intact.** That was not a given: the
+2026-08-13 run below predates the death of pve01 on 2026-09-03 and the platform move
+in PET-334, so every claim in this document was three weeks stale and unverified
+against the cluster that actually exists.
+
+The first re-run scored **31 answered · 5 did not**. Four of the five failures were a
+single cause, and it was the probe's, not the stack's:
+
+- **The probe was pointed at a dead host.** `ip_for plex` still returned
+  `192.168.50.140` — plex 103, which died with pve01 and was never rebuilt. All four
+  Plex probes had been reporting a hard NO against an address that answers nothing.
+  Repointed to `192.168.50.236` (plex-gpu, VMID 236, pve02), all four pass, and the
+  technique needed no change at all: read the token out of `Preferences.xml` over SSH,
+  curl `127.0.0.1:32400`. It returns a full `MediaContainer` with 25 library sections.
+- **The one remaining NO is prowlarr's `/queue`**, exactly as recorded below. Still a
+  hard 404, still not a bug.
+- **The one SKIP is gluetun's `/v1/vpn/status`** (401), also unchanged — and still
+  irrelevant, because the two routes that matter answer unauthenticated.
+
+What that leaves is the finding worth carrying into the build:
+
+| | 2026-08-13 | 2026-09-06 |
+|---|---|---|
+| Total probes | 41 | 37 (lidarr's 4 removed in PET-319) |
+| Answered | 39 | **35** |
+| Did not | 1 (prowlarr `/queue`) | 1 (prowlarr `/queue`) |
+| Skipped | 1 (gluetun vpn status) | 1 (gluetun vpn status) |
+
+**Every join in §1 still holds**, and the guests that moved node kept their addresses,
+so nothing in the data layer depends on placement. Two live signals confirmed in the
+run:
+
+- **`port-sync` is healthy.** gluetun's forwarded port and qBittorrent's `listen_port`
+  are both `63689`. The whole-client-stall failure mode in §7 is not firing.
+- **The tunnel is up and not leaking**, egressing at `62.169.136.54` — Zurich,
+  Switzerland. PET-295 moved the exit off Israel and it held through the rebuild.
+
+⚠ **What this run did NOT re-verify:** the §2 auth notes and the qBittorrent SNAT
+finding were carried forward from 2026-08-13 rather than re-derived. They are
+consistent with a clean run through `docker exec`, but treat them as [src] until
+something depends on them.
+
 
 ---
 
