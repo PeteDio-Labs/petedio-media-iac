@@ -1,0 +1,39 @@
+# Nightly Plane reconcile for this repo. The reusable job lives in petedio-iac; this
+# file is the whole of what a repo needs, exactly like plane-sync.yml beside it.
+#
+# ⚠ WHY EVERY REPO NEEDS ITS OWN (PET-363). A reusable workflow reads
+# `github.repository` and `github.token` from the CALLER, so a repo with no caller is
+# never reconciled by anyone. Until 2026-09-06 only petedio-iac had one, and the job
+# reported green nightly while covering 1 of 11 repos — stranding PET-331 for two days
+# and PET-289 for nineteen, both closed by hand in the end.
+#
+# It is inert until PLANE_BASE_URL / PLANE_WORKSPACE / PLANE_PROJECT_ID are set:
+# scripts/plane-sync.sh warns and exits 0 when they are missing, so this can never
+# break this repo's CI.
+#
+# ⚠ The cron minute is staggered per repo. Eleven repos firing at once queue behind two
+# self-hosted x64 runners, and a queued nightly that misses its window is a reconciler
+# that did not run. Do not copy this minute into a twelfth repo — pick a free one.
+name: plane-reconcile
+
+on:
+  schedule:
+    - cron: "22 8 * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "How many days of merged PRs to re-check"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    uses: PeteDio-Labs/petedio-iac/.github/workflows/plane-reconcile.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      lookback_days: ${{ github.event.inputs.lookback_days || '3' }}
