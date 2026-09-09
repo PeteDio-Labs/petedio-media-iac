@@ -40,6 +40,19 @@ media_base_stale_apt_sources: []
 # Masking stops PAM waiting, because a masked unit answers "no" immediately rather
 # than "not yet" for 25 seconds. Declared per host so it stays auditable in inventory
 # rather than buried in a role, the same way the stale apt sources are.
+#
+# ⚠ MASKING WAS THE WORKAROUND, NOT THE FIX, AND THE FIX IS IN. 226/NAMESPACE on
+# prowlarr meant the container had no `nesting=1`, so the generated AppArmor profile
+# carried `deny mount -> /proc/,` and no unit with ProtectSystem=strict could build
+# its sandbox. PET-378 declared the features and 109 was restarted onto them: logind
+# came back with its sandbox intact, four failed units went to zero, and logins
+# dropped from 25.2 s to 0.2 s. The mask is gone from host_vars/prowlarr.yml.
+#
+# So before adding a unit here, ask whether the container can build a namespace at
+# all — `pct config <vmid> | grep features` on the node. A mask hides that question
+# for as long as nobody asks it. The guard in tasks/main.yml stays: it exists to
+# catch the NEXT host that grows a broken logind, which is a different job from
+# papering over this one.
 media_base_masked_units: []
 
 # Master switch consumed by every media role. `check-updates.yml` leaves it
