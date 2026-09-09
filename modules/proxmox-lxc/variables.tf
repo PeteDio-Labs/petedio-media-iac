@@ -65,7 +65,7 @@ variable "bridge" {
   type        = string
   # ⚠ Was vmbr1 until 2026-09-04 — pve01's LAN bridge. pve02 and pve03 use
   # vmbr0; on pve02 vmbr1 is the VXLAN bridge, which is not a LAN.
-  default     = "vmbr0"
+  default = "vmbr0"
 }
 
 variable "firewall" {
