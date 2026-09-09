@@ -11,9 +11,20 @@ media_timezone: "Etc/UTC"
 # Lifecycle (stack-up / stack-down / stack-power)
 media_health_port: 9696
 
-# systemd-logind cannot start here (226/NAMESPACE) and PAM waits 25 seconds for it on
-# every SSH login, so mask it. See roles/media-base/defaults/main.yml. Measured
-# 2026-09-09: `ssh root@.20 true` took 25.2s while its three siblings took 0.2s, with
-# the whole gap after authentication, in the session stage.
-media_base_masked_units:
-  - systemd-logind.service
+# ⚠ THE systemd-logind MASK WAS REMOVED HERE ON 2026-09-09, AND THE ROOT CAUSE IS
+# FIXED. Do not put it back without reading this first.
+#
+# logind died with 226/NAMESPACE because CT 109 was the one container in the lab
+# with no `nesting=1`. Without it Proxmox writes `deny mount -> /proc/,` into the
+# generated AppArmor profile, so a unit with ProtectSystem=strict cannot build its
+# sandbox. PAM then waited 25 s for it on every login. PET-378 declared the features
+# (petedio-iac roles/lxc-features) and 109 was restarted onto them.
+#
+# Measured after the restart: logind active with its full sandbox intact, ZERO failed
+# units where there were four, and `ssh root@.20 true` at 0.19-0.24 s against 25.2 s
+# before. The mask was a workaround for a container misconfiguration, not a property
+# of this host.
+#
+# If logind breaks here again, check `pct config 109` for its features before masking
+# anything — that is the cause you already know about.
+media_base_masked_units: []
