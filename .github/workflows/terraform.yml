@@ -86,7 +86,21 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Format check
+      # Runs from the repo ROOT, overriding the job's environments/media default, so the
+      # check reaches modules/ too. It read as a whole-repo check and was a subtree check:
+      # modules/proxmox-lxc/variables.tf sat unformatted on main and every run stayed
+      # green. Only this step moves -- init, validate and plan below still need a
+      # Terraform root, and the repo root is not one.
+      #
+      # A step-level working-directory resolves from GITHUB_WORKSPACE, not from the job
+      # default, so the override needs no path gymnastics.
+      # NB: `terraform fmt -recursive` skips dot-directories, so .claude/ is never scanned.
+      #
+      # ⚠ petedio-iac fixed this same defect in the same file name in PET-361, and this
+      # copy of the workflow never received it (PET-379). When one repo's CI learns
+      # something, check the sibling -- PET-332 was the same miss with Terraform state.
+      - name: Format check (whole repo)
+        working-directory: .
         run: terraform fmt -check -recursive
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
