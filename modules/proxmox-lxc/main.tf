@@ -5,8 +5,20 @@
 #
 # Deliberately NO `features {}` block: Proxmox rejects API tokens for the
 # features mutation (root@pam check), so nesting/keyctl are set out-of-band by
-# Ansible (`pct set --features nesting=1,keyctl=1`). `features` is in
-# ignore_changes so a later apply never strips them. See docs/GOTCHAS.md.
+# Ansible. `features` is in ignore_changes so a later apply never strips them.
+# See docs/GOTCHAS.md.
+#
+# ⚠ THAT ANSIBLE LIVES IN petedio-iac, NOT HERE: `configure-lxc-features.yml`
+# plus `roles/lxc-features` (PET-378). It runs against the Proxmox NODES, which
+# hold guests from both repos, so it declares and converges every container in
+# the lab — media LXCs included. RUN IT AFTER CREATING A CONTAINER.
+#
+# Until PET-378 this comment named a mechanism that did not exist. The only thing
+# setting features was three one-off scripts for three named containers in
+# petedio-iac, so anything created through this module got none: CT 109 prowlarr
+# has never had them, and its `systemd-logind` has been dead at 226/NAMESPACE
+# ever since, costing 25 s on every SSH login (PET-377). Nothing reports it —
+# `features` is in ignore_changes, so the plan is clean either way.
 
 resource "proxmox_virtual_environment_container" "this" {
   description   = var.description
