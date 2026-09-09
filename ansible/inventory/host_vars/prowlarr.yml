@@ -10,3 +10,10 @@ media_timezone: "Etc/UTC"
 
 # Lifecycle (stack-up / stack-down / stack-power)
 media_health_port: 9696
+
+# systemd-logind cannot start here (226/NAMESPACE) and PAM waits 25 seconds for it on
+# every SSH login, so mask it. See roles/media-base/defaults/main.yml. Measured
+# 2026-09-09: `ssh root@.20 true` took 25.2s while its three siblings took 0.2s, with
+# the whole gap after authentication, in the session stage.
+media_base_masked_units:
+  - systemd-logind.service

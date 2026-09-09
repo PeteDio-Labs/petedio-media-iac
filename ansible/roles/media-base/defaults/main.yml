@@ -23,6 +23,25 @@ media_base_packages:
 # not a Plex quirk. Set per host in host_vars/. Empty = nothing to clean.
 media_base_stale_apt_sources: []
 
+# systemd units to MASK on this host. Empty everywhere except where a unit cannot
+# start in this container AND its failure costs something.
+#
+# ⚠ THE COST IS NOT THE FAILED UNIT, IT IS WHAT WAITS ON IT. systemd-logind died on
+# prowlarr-20 with 226/NAMESPACE — systemd unable to build the unit's sandbox, the
+# usual signature in an unprivileged LXC — and gave up after five restarts. Nothing
+# needs logind on a headless *arr box, so the dead unit looked harmless.
+#
+# It was not. `pam_systemd` runs in common-session on every SSH login and asks logind
+# over dbus to register the session. With logind gone that call waits for something
+# that is not coming and times out after 25 seconds. The module is `optional`, so the
+# session then proceeds and every command returns correctly — 25 seconds late.
+#
+# Every ssh, every Ansible play and every mtrace lookup against that host paid it.
+# Masking stops PAM waiting, because a masked unit answers "no" immediately rather
+# than "not yet" for 25 seconds. Declared per host so it stays auditable in inventory
+# rather than buried in a role, the same way the stale apt sources are.
+media_base_masked_units: []
+
 # Master switch consumed by every media role. `check-updates.yml` leaves it
 # false (report only); `update-media.yml` sets it true.
 media_update_apply: false
