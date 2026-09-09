@@ -33,3 +33,45 @@
   ansible.builtin.apt:
     update_cache: true
   when: media_base_stale_removed is changed
+
+# ── Units that cannot run here ───────────────────────────────────────────────
+# The second intentionally *corrective* task in this role, and for the same reason as
+# the apt one: a unit failing in a restart loop is drift, not baseline. Declared per
+# host in host_vars/ so what gets masked is auditable in inventory.
+- name: Units that cannot start in this container are masked
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+    enabled: false
+  loop: "{{ media_base_masked_units }}"
+
+# ⚠ CATCH THE NEXT ONE, DO NOT WAIT TO FEEL IT. This cost a day to find, because a
+# dead logind has no symptom of its own — it presents as "everything touching that
+# host is slow", which reads as the app being slow and sends you reading the app's
+# logs. The check below is the difference between a report and a mystery.
+#
+# It fails only when logind is BROKEN AND UNDECLARED. A host that masked it
+# deliberately is not a finding; a host that grew a failed one since the last run is.
+- name: Read the state of systemd-logind
+  ansible.builtin.command:
+    cmd: systemctl is-active systemd-logind.service
+  register: media_base_logind
+  changed_when: false
+  failed_when: false
+  # ⚠ command tasks SKIP under --check by default, which would make this whole guard
+  # invisible in exactly the run people use to ask "is anything wrong". It reads a
+  # service state and changes nothing, so it is safe to run in check mode — and a dry
+  # run is the right place to be told a host has grown a broken logind.
+  check_mode: false
+
+- name: Fail when systemd-logind is broken and nothing says it should be
+  ansible.builtin.fail:
+    msg: >-
+      systemd-logind on {{ inventory_hostname }} is '{{ media_base_logind.stdout | trim }}'
+      and is not in media_base_masked_units. pam_systemd waits on it in common-session,
+      so every SSH login to this host will stall about 25 seconds before proceeding —
+      which looks like a slow application, not a broken login service. Either mask it in
+      host_vars/{{ inventory_hostname }}.yml, or fix why it cannot start. See PET-377.
+  when:
+    - media_base_logind.stdout | trim == 'failed'
+    - "'systemd-logind.service' not in media_base_masked_units"
