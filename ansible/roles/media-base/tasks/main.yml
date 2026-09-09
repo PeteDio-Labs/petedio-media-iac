@@ -44,6 +44,19 @@
     masked: true
     enabled: false
   loop: "{{ media_base_masked_units }}"
+  register: media_base_masked
+
+# ⚠ A MASKED UNIT KEEPS ITS OLD `failed` STATE until something clears it, so
+# `systemctl --failed` still lists it and the list stops meaning anything. Reset only
+# the units this role masked — never blanket `reset-failed`, which would erase real
+# failures the host is trying to report.
+- name: Clear the stale failed state of units we masked
+  ansible.builtin.command:
+    cmd: "systemctl reset-failed {{ item }}"
+  loop: "{{ media_base_masked_units }}"
+  changed_when: false
+  failed_when: false
+  when: media_base_masked_units | length > 0
 
 # ⚠ CATCH THE NEXT ONE, DO NOT WAIT TO FEEL IT. This cost a day to find, because a
 # dead logind has no symptom of its own — it presents as "everything touching that
