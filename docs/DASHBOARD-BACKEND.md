@@ -1,8 +1,14 @@
 # Media dashboard — backend design
 
+> **Status: superseded by petedio-media-control (mtrace, PET-355, deployed 2026-09-09
+> on media-dash-237).** Kept for the reasoning. Two things came out differently: the
+> runtime is Bun compiled to a standalone binary, not Go, and there is no central store
+> of seven credentials — the host holds one SSH keypair and one bearer, and reads the
+> apps through their own hosts. See `vault/Systems/mtrace.md`.
+
 Companion to [DASHBOARD-CAPABILITIES.md](DASHBOARD-CAPABILITIES.md), which
 established *what the APIs can do*. This is *how the thing that calls them is
-built*. Still design-stage — no code exists.
+built*.
 
 Everything here is shaped by four constraints the capability review turned up,
 and they drive more of the design than any preference does:

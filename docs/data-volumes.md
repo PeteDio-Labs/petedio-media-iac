@@ -77,13 +77,15 @@ this document used to list.
 
 | App (VMID) | Config path (in LXC) | Size | rootfs datastore |
 |---|---|---|---|
-| lidarr (100) | `/var/lib/lidarr` | 58M | local-lvm |
-| seerr (101) | `/opt/seerr/config` (+ `/etc/seerr/seerr.conf`) | 5.5M | sdb3-storage |
-| plex (103) | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server` | 5.6G | local-lvm |
-| sonarr (104) | `/var/lib/sonarr` | 275M | sdb3-storage |
-| radarr (105) | `/var/lib/radarr` | 679M | sdb3-storage |
-| prowlarr (109) | `/var/lib/prowlarr` | 115M | local-lvm |
-| qbittorrent-vpn (110) | `/opt/qbittorrent-vpn/qbittorrent/config` | 8.3M | local-lvm |
+| seerr (101) | `/opt/seerr/config` (+ `/etc/seerr/seerr.conf`) | 5.5M | `local` (pve03) |
+| sonarr (104) | `/var/lib/sonarr` | 275M | `local` (pve03) |
+| radarr (105) | `/var/lib/radarr` | 679M | `local` (pve03) |
+| prowlarr (109) | `/var/lib/prowlarr` | 115M | `local` (pve03) |
+| qbittorrent-vpn (110) | `/opt/qbittorrent-vpn/qbittorrent/config` | 8.3M | `local-lvm` (pve02) |
+| plex-gpu (236) | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server` | (re-measure) | `local-lvm` (pve02) |
+
+Sizes are the 2026-07 capture; the datastores were reconciled on 2026-09-10 (PET-385).
+lidarr (100) and plex (103) are gone — PET-319, and the 2026-09-03 rack loss.
 
 ## Captured-state ↔ reality
 
@@ -100,11 +102,11 @@ Options to close it (follow-up): a Proxmox `vzdump` job for the media VMIDs to a
 or MinIO target, or file-level sync of the `/var/lib/*arr` + `/opt/seerr/config` +
 qbit config dirs.
 
-> ⚠ **`pct snapshot` is NOT a universal fallback here.** The three `sdb3-storage`
-> hosts — **seerr (101), sonarr (104), radarr (105)** — are on thick LVM, where
-> Proxmox refuses with `snapshot feature is not available`. That is exactly the set
-> holding the \*arr databases. For those, take a **tarball** of the config dir
-> instead:
+> ⚠ **`pct snapshot` is NOT a universal fallback here.** Every guest on pve03 —
+> **seerr (101), sonarr (104), radarr (105), prowlarr (109)** and flaresolverr — sits on
+> the `local` directory store, where Proxmox refuses with `snapshot feature is not
+> available`. That is exactly the set holding the \*arr databases. For those, take a
+> **tarball** of the config dir instead:
 >
 > ```bash
 > ssh root@<host> 'tar czf /root/<app>-config-$(date +%F).tgz -C /var/lib <app>'
@@ -114,7 +116,7 @@ qbit config dirs.
 > seerr 3.4.1 swap is the only reason that incident was a 4-minute recovery instead
 > of a rebuild — see `docs/GOTCHAS.md` and `docs/runbooks/seerr-upgrade.md`.
 
-`local-lvm` hosts (lidarr 100, plex 103, prowlarr 109, qbittorrent-vpn 110) are thin
-LVM and **can** be snapshotted.
+The `local-lvm` hosts on pve02 (qbittorrent-vpn 110, plex-gpu 236) are thin LVM and
+**can** be snapshotted.
 
 Tracked under PET-48.
