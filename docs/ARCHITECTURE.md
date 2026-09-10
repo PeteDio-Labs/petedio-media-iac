@@ -89,7 +89,7 @@ flowchart TB
 - **Data safety:** the *arr/Plex media + downloads live on the shared host stores
   `/mnt/media` + `/mnt/downloads` (bind-mounts), so destroying/recreating a
   *container* never touches the data.
-- **Pool membership** (`pool.tf`, PET-56) puts all seven LXCs in a Terraform-managed
+- **Pool membership** (`pool.tf`, PET-56) puts all six LXCs in a Terraform-managed
   Proxmox resource pool. Add-only — it was the one change in the first real apply.
 - **filebrowser (102)** is **decommissioned** — PET-82 is Done. It no longer exists
   on the cluster and is not modelled here.

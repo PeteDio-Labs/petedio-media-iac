@@ -30,7 +30,7 @@ of a capture pass.
 
 ## Pre-flight (do this first)
 
-1. **Back up for rollback.** LXC 101's rootfs is on `sdb3-storage` (thick LVM), so
+1. **Back up for rollback.** LXC 101 sits on pve03's `local` directory store, so
    `pct snapshot` is **not available** (`snapshot feature is not available`). Use a
    full-tree tarball plus the config dir instead:
    ```bash

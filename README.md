@@ -5,8 +5,8 @@ Terraform + Ansible for the homelab **media stack** — brought under IaC by
 no downtime). Split out from [`petedio-iac`](https://github.com/PeteDio-Labs/petedio-iac)
 so the media stack gets its own state object and its own Vault secret scope.
 
-Part of the PeteDio homelab→AWS platform. Tracker: Linear project **Media Stack**
-(milestone *Brownfield Capture*).
+Part of the PeteDio homelab→AWS platform. Tracker: Plane (workspace `petedio`, project
+`PET`); Linear was retired on 2026-08-13.
 
 **The capture is complete** — PET-46 (import), PET-47 (Ansible), PET-53 (topology),
 PET-114 and PET-163 (CI) are all Done, the media LXCs are in the cluster resource
@@ -26,11 +26,11 @@ environments/media/         # the media environment
   media.tf                  #   one module block per running LXC (ground-truthed)
   terraform.tfvars.example  #   template (real tfvars is gitignored)
 ansible/                    # host config + update management (idempotent)
-  inventory/hosts.yml       #   `media` (all) + `servarr` (the four *arr apps)
+  inventory/hosts.yml       #   `media` (all) + `servarr` (sonarr, radarr, prowlarr)
   inventory/host_vars/      #   per-host captured reality (timezone, API version)
   roles/media-base/         #   baseline shared by every media LXC
-  roles/servarr/            #   ONE role for sonarr/radarr/lidarr/prowlarr
-  roles/plex/               #   apt-managed Plex
+  roles/servarr/            #   ONE role for sonarr/radarr/prowlarr (lidarr removed, PET-319)
+  roles/plex/               #   apt-managed Plex — no host since 103 died; 236 is bootstrap-plex-gpu.yml
   roles/seerr/              #   build-from-source seerr
   roles/qbittorrent-vpn/    #   the gluetun/qbittorrent compose stack (templated)
   roles/media-lifecycle/    #   in-use guards + ordered stop/start
@@ -39,7 +39,7 @@ scripts/                    # api-capability-probe.sh — read-only API ground-t
 docs/GOTCHAS.md             # media-specific gotchas (+ pointer to petedio-iac's)
 docs/ARCHITECTURE.md        # live mapping, with a Mermaid diagram
 docs/data-volumes.md        # where every stateful bit lives + what is NOT backed up (PET-48)
-docs/DASHBOARD-*.md         # design review for a media triage tool (no code yet)
+docs/DASHBOARD-*.md         # design records; the tool shipped as petedio-media-control (mtrace, PET-355)
 docs/runbooks/              # CI Vault-OIDC, qBittorrent Vault secret, seerr upgrade
 .github/workflows/          # Workflow B — validate-on-PR (hosted), apply-on-merge (self-hosted)
 ```
@@ -59,7 +59,7 @@ ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --limit radar
 
 | Service | Mechanism | Notes |
 |---|---|---|
-| sonarr / radarr / lidarr / prowlarr | the app's own `builtIn` updater, over its REST API | one `servarr` role; verifies it returns on the target version |
+| sonarr / radarr / prowlarr | the app's own `builtIn` updater, over its REST API | one `servarr` role; verifies it returns on the target version |
 | plex | apt (`repo.plex.tv`) | skips while anyone is watching |
 | seerr | GitHub source tag + `pnpm build` | opt-in; atomic tree swap with rollback |
 | qbittorrent-vpn | `docker compose pull` | skips while torrents are downloading; verifies VPN egress after |
@@ -81,13 +81,13 @@ Ordering is dependency-aware, consumers before producers on the way down and
 the exact reverse coming up:
 
 ```
-down:  plex, seerr  →  sonarr, radarr, lidarr  →  prowlarr  →  qbittorrent-vpn
-up:    qbittorrent-vpn  →  prowlarr  →  sonarr, radarr, lidarr  →  seerr, plex
+down:  plex, seerr  →  sonarr, radarr  →  prowlarr  →  qbittorrent-vpn
+up:    qbittorrent-vpn  →  prowlarr  →  sonarr, radarr  →  seerr, plex
 ```
 
 Each tier waits for its port to actually accept connections before the next
-starts — "systemd says active" is not "serving", and Lidarr runs a DB migration
-before it binds (hence its longer `media_health_timeout`).
+starts — "systemd says active" is not "serving", and the arr apps run a DB migration
+before they bind, which is what `media_health_timeout` allows for.
 
 Plex and qBittorrent **refuse to stop while in use** (someone watching, something
 downloading) and say why; override with `-e media_lifecycle_force=true`.
@@ -102,10 +102,16 @@ databases get corrupted. Run-state is deliberately **not** in Terraform — the
 module keeps `started` in `lifecycle.ignore_changes`, because CI applies on merge
 and an unrelated merge should never boot the stack back up.
 
+> ⚠ **The cache is down (2026-09-03–), and it will not come back as it was.** registry-106
+> died with pve01, `pct restore` fails on its idmap, and its blob store went with pve02's
+> rebuild (PET-389). `qbit_registry` still names `docker.pdlab.dev`, so `update-media.yml`
+> and `stack-up.yml` cannot pull qbittorrent-vpn's images until that is repointed at upstream
+> (the Hub cap applies again) or the registry is rebuilt.
+
 **Registry rate limits — fixed 2026-08-11.** Two of the three qbittorrent-vpn
 images come from `docker.io`, which caps anonymous pulls (100/6h per IP); `lscr.io`
-throttles bursts too. All three resolve through the homelab Nexus pull-through
-cache (`docker.pdlab.dev`, see `qbit_registry` in the role defaults), which removes
+throttles bursts too. All three resolved through the homelab Zot pull-through
+cache (`docker.pdlab.dev`, see `qbit_registry` in the role defaults), which removed
 the cap from the normal path. The cache is on-demand, so the first pull of a new tag
 still fetches upstream and can still be throttled — the handling for that stays:
 the digest check reports an unresolvable image as `NOT CHECKED` rather than
@@ -148,15 +154,18 @@ Bringing the `.env` in means first seeding those secrets into this repo's Vault 
 
 ## Captured hosts (live VMID/IP — permanent; the 21x renumber was canceled, PET-49)
 
-| Host | VMID | IP | Notes |
-|---|---|---|---|
-| lidarr | 100 | .14 | |
-| seerr | 101 | .33 | sdb3-storage; eth1-only; no bind-mounts |
-| plex | 103 | 86.140 (vmbr0) + .140 (vmbr1) | dual-homed; downloads mount ro |
-| sonarr | 104 | .15 | sdb3-storage |
-| radarr | 105 | .16 | sdb3-storage |
-| prowlarr | 109 | .20 | |
-| qbittorrent-vpn | 110 | .21 | Gluetun/Proton |
+| Host | VMID | IP | Node | Notes |
+|---|---|---|---|---|
+| seerr | 101 | .33 | pve03 | `local` store; no bind-mounts |
+| flaresolverr | 102 | .150 (DHCP) | pve03 | the VMID filebrowser once used |
+| sonarr | 104 | .15 | pve03 | `local`; `/mnt/media` + `/downloads` are NFS binds from pve02 |
+| radarr | 105 | .16 | pve03 | same |
+| prowlarr | 109 | .20 | pve03 | same |
+| qbittorrent-vpn | 110 | .21 | pve02 | Gluetun/Proton; `local-lvm`; binds the ZFS pools directly |
+| plex-gpu | 236 | .236 | pve02 | replaced plex 103, which died with pve01 (2026-09-03); `/mnt/downloads` mounted ro |
+
+lidarr (100) was removed in PET-319; the table above was reconciled to `pct list` on
+both nodes on 2026-09-10 (PET-385).
 
 The old "110 is also in the retired `homelab-infra` TF — reconcile before applying"
 caveat is **resolved** (2026-08-11), and it was verified rather than assumed: the
@@ -164,8 +173,8 @@ caveat is **resolved** (2026-08-11), and it was verified rather than assumed: th
 petedio-iac returns no VMID in 100–110. There was no old side left to `state rm`.
 That is what unblocked `MEDIA_APPLY_ENABLED`.
 
-**filebrowser (102)** was the old file/image store and is **decommissioned** —
-`PET-82` is Done. It is not in this repo and no longer exists on the cluster.
+**filebrowser** was the old file/image store and is **decommissioned** — `PET-82` is
+Done. The app is gone; VMID 102 was reused by flaresolverr.
 
 ## How to run (local, Mac on the LAN)
 
@@ -204,8 +213,10 @@ came here expecting the PR plan to be the review surface: that changed with PET-
 
 `apply` is live (`MEDIA_APPLY_ENABLED=true`), so **a squash-merge really does apply**.
 Pushes are filtered with `paths-ignore` so a docs-only merge doesn't mint credentials
-on the homelab runner. Vault (`.223`) comes up **sealed after any reboot** and must be
-unsealed by hand — the apply job preflights that and says so.
+on the homelab runner. Vault (`.223`) seals every night around 02:45, when pve03's
+vzdump runs `mode: stop`, and the pete-pi-1 `vault-unseal.timer` reopens it with the
+Mac's launchd agent as fallback (PET-373). The apply job preflights the seal state and
+says so; if it catches the window, wait a few minutes or run `pet-secrets doctor`.
 
 Branch `pet-<n>-<slug>`, squash-merge, mention `PET-<n>` in the PR. Secrets live in
 **Vault**, never in code. See `docs/GOTCHAS.md` and the petedio-iac repo for the

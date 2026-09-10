@@ -56,16 +56,15 @@ apply-on-merge is on.
 | PET-53 | Decide media LXC topology | **Done** |
 | PET-114 | CI: vault-action v3→v4 | **Done** |
 | PET-163 | Keep PR code off the self-hosted runner | **Done** |
-| PET-48 | Document media data volumes / prove no-data-loss | **In Review** — the only live one |
+| PET-48 | Document media data volumes / prove no-data-loss | **Done** — shipped as `docs/data-volumes.md`; PR #3 closed 2026-08-13 |
 | PET-49 | Renumber media → 21x | **Canceled** |
 | PET-81 | Anime add-on | **Canceled** |
 
 Also landed from the Platform project: **PET-56** (media LXCs into the cluster
 resource pool, `pool.tf`) and **PET-82** (filebrowser 102 decommissioned).
 
-⚠ **PET-48 is the loose thread.** It is In Review against **PR #3**, open since
-2026-07-14 and long superseded by the merged #4–#7. Read it before trusting it;
-it wants closing or rebasing, not merging.
+PET-48 shipped as `docs/data-volumes.md`; the PR it was once tied to, #3, was closed
+unmerged on 2026-08-13 (verified with `gh pr view 3` on 2026-09-10).
 
 The `PET-<n>` numbers above are **Linear-era** and resolve only in that retired,
 read-only workspace. Tracking moved to **Plane** on 2026-08-13; the four issues
@@ -89,8 +88,9 @@ new work into PR descriptions no longer applies — file it in Plane instead.
    config <id>`, or `/api2/json/cluster/resources?type=vm` for placement across
    both nodes. Same rule applies to this file.
    ⚠ **Not `192.168.50.10`.** That was pve01's address and now belongs to **pve03**,
-   which holds only sonarr/radarr/prowlarr. pve02 is `192.168.50.11` and carries
-   everything else. An address is not a name.
+   which holds the arr stack (101, 104, 105, 109), flaresolverr 102 and the whole
+   platform tier. pve02 is `192.168.50.11` and holds only qbittorrent-vpn 110, plex-gpu
+   236 and runner-233. An address is not a name.
 4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key +
    addresses** go to `kv/services/media/qbittorrent`, read by a media-scoped policy —
    not committed, not in the shared `ansible` policy. Seed still pending;
@@ -116,8 +116,9 @@ new work into PR descriptions no longer applies — file it in Plane instead.
 ## bpg / Proxmox gotchas (carried from petedio-iac — honor verbatim)
 
 - **No `features {}` in TF.** API tokens can't set LXC features (root@pam check).
-  Ansible sets nesting/keyctl out-of-band (`pct set <id> --features ...`). Keep
-  `features` in `lifecycle.ignore_changes`.
+  petedio-iac's `roles/lxc-features` (`playbooks/configure-lxc-features.yml`) declares
+  nesting/keyctl for every container, this repo's included, and converges them as
+  root@pam (PET-378). Keep `features` in `lifecycle.ignore_changes`.
 - **Import never round-trips** `template_file_id`, `features`, `user_account` —
   all three are in `ignore_changes` or every plan shows phantom drift.
 - **`vmbr0` is the LAN bridge on pve02 and pve03, and it carries the gateway.**
@@ -162,10 +163,11 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 ## Ansible layer (PET-47, landed)
 
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
-sonarr/radarr/lidarr/prowlarr) · `plex` (apt) · `seerr` (build from source) ·
-`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, all images
-pulled through the `docker.pdlab.dev` Nexus cache) · `media-lifecycle` (in-use
-guards + ordered stop/start).
+sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; no host since 103
+died, `plex-primary.yml` only asserts 236 runs) · `seerr` (build from source) ·
+`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, images pulled
+through the `docker.pdlab.dev` Zot cache — **down since 2026-09-03**, PET-389) ·
+`media-lifecycle` (in-use guards + ordered stop/start).
 
 Playbooks: `check-updates.yml` (read-only report) · `update-media.yml` ·
 `stack-up.yml` / `stack-down.yml` / `stack-power.yml` · `configure-media.yml`.
@@ -215,9 +217,10 @@ the review surface.
 docs-only merge can't mint credentials on the homelab runner. `pull_request` is
 deliberately **unfiltered** so `validate` always reports.
 
-**Vault seals on every reboot of `.223`** and is unsealed by hand from the password
-manager. A sealed Vault fails the apply job at the preflight step with a message
-saying so; CI cannot fix it.
+**Vault seals every night around 02:45** — pve03's vzdump runs `mode: stop` — and the
+pete-pi-1 `vault-unseal.timer` reopens it, with the Mac's launchd agent as fallback
+(PET-373). A sealed Vault fails the apply job at the preflight step with a message
+saying so; CI cannot fix it, but a few minutes usually do.
 
 ## Workflow
 

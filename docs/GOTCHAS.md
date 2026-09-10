@@ -23,9 +23,10 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
 
 ## Per-host shape (the variances that bite)
 
-- **rootfs datastore varies:** most media LXCs are on `local-lvm`, but **seerr
-  (101), sonarr (104), radarr (105) are on `sdb3-storage`**. The module's
-  `datastore_id` must match per host or plan shows drift.
+- **rootfs datastore varies by node:** `local-lvm` (thin) on pve02 for 110 and 236,
+  the plain `local` directory store on pve03 for 101/102/104/105/109 — pve03 has no
+  thin pool. The module's `datastore_id` must match per host or plan shows drift.
+  (`sdb3-storage` was pve01's and died with it.)
 - **~~plex (103) is DUAL-HOMED~~ — GONE.** 103 died with pve01 on 2026-09-03 and
   was not rebuilt. Its replacement, plex-gpu (236) on pve02, is single-homed on
   `192.168.50.236` because pve02 has one NIC on `.50`; the TVs on the `.86` mesh
@@ -127,8 +128,11 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   this breaks *both* the digest check and the pull with HTTP 429. Treat an
   unresolvable remote digest as **unknown, never as up-to-date**. compose aborts
   the pull before recreating anything, so the failure is safe — but it must be
-  surfaced. **Fixed 2026-08-11:** all three images now resolve through the homelab
-  Nexus pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
+  surfaced. **Fixed 2026-08-11, undone 2026-09-03:** all three images resolved through
+  the homelab Zot pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
+  defaults) until registry-106 died with pve01; it is down with no blob store left
+  (PET-389), so pulls through it fail until it is rebuilt or `qbit_registry` is repointed
+  at upstream. The original fix
   defaults), including the `lscr.io` one, which is not Hub-capped but benefits from
   the same locality. The cache is on-demand — the first pull of a tag still fetches
   from upstream.
