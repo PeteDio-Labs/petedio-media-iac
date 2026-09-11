@@ -208,6 +208,10 @@ apply runner is **self-hosted inside the homelab**:
   creds via Vault OIDC and touches state. Gated behind `MEDIA_APPLY_ENABLED`
   (**`true` since 2026-08-11**).
 
+- **`media-updates`** — dispatch-only; pete-bot's `/update` starts it (PET-395). It
+  mints `media-updates`, which reads only `kv/iac/lxc-ssh`, and runs `check-updates.yml
+  --check` or `update-media.yml` with `--skip-tags baseline`. No push or PR can start it.
+
 **PRs do NOT get a `terraform plan` comment.** A real plan needs the LAN backend and
 provider creds that are deliberately withheld from PR runs. The authoritative plan is
 the operator's local one, or the apply-on-merge log — do not describe the PR plan as
