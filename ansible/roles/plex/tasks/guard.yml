@@ -1,0 +1,34 @@
+# guard.yml — classify the Plex update guard from the answers main.yml collected.
+# Pure logic, no I/O, so tests/plex-update-guard.yml can feed it recorded answers,
+# including the failures a live server will not produce on demand.
+#
+# In:  plex_unit      register of `systemctl is-active`
+#      plex_sessions  register of GET /status/sessions (skipped when not active)
+# Out: plex_update_guard         idle | in-use | unknown
+#      plex_update_guard_reason  one line, for the skip message and the report
+---
+- name: Plex — read the guard's inputs
+  ansible.builtin.set_fact:
+    plex_unit_state: "{{ plex_unit.stdout | default('') | trim }}"
+    plex_sessions_status: "{{ plex_sessions.status | default(-1) | int }}"
+    # /status/sessions always opens with <MediaContainer size="N">. A 200 without
+    # it is not the document that was asked for, so it reads as 'unknown'.
+    plex_session_size: >-
+      {{ (plex_sessions.content | default('') | regex_findall('size="(\d+)"') or ['']) | first }}
+
+- name: Plex — classify the guard
+  ansible.builtin.set_fact:
+    plex_update_guard: >-
+      {{ 'idle' if plex_unit_state != 'active'
+         else 'unknown' if plex_sessions_status | int != 200 or plex_session_size == ''
+         else 'in-use' if plex_session_size | int > 0
+         else 'idle' }}
+    plex_update_guard_reason: >-
+      {{ (plex_service ~ ' is ' ~ (plex_unit_state or 'in an unknown state') ~ ', so nobody is watching')
+         if plex_unit_state != 'active'
+         else ('could not read Plex sessions (HTTP '
+               ~ (plex_sessions_status if plex_sessions_status | int != -1 else 'no response')
+               ~ ', size ' ~ (plex_session_size or 'absent')
+               ~ '), and that does not show nobody is watching')
+         if plex_sessions_status | int != 200 or plex_session_size == ''
+         else (plex_session_size ~ ' active playback session(s)') }}

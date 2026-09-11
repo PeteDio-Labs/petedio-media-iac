@@ -163,8 +163,8 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 ## Ansible layer (PET-47, landed)
 
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
-sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; no host since 103
-died, `plex-primary.yml` only asserts 236 runs) · `seerr` (build from source) ·
+sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; updates plex-gpu
+236 since PET-394) · `seerr` (build from source) ·
 `qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, images pulled
 through the `docker.pdlab.dev` Zot cache — **down since 2026-09-03**, PET-389) ·
 `media-lifecycle` (in-use guards + ordered stop/start).

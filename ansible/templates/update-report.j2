@@ -1,5 +1,5 @@
 {% set rows = [] %}
-{% for h in groups['media'] | sort %}
+{% for h in (groups['media'] + (groups['gpu-media'] | default([]))) | unique | sort %}
 {%   if hostvars[h].media_update_report is defined %}
 {%     set _ = rows.append(hostvars[h].media_update_report) %}
 {%   endif %}
