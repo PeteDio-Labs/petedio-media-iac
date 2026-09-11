@@ -1,0 +1,59 @@
+---
+# plex-settings — converge the playback limits on plex-gpu (236), so a capable
+# client receives the original file instead of a re-encode.
+#
+# THERE IS NO "DIRECT PLAY" SWITCH. Direct Play is the outcome of a negotiation
+# between the client and the server. The server's only say in that negotiation is
+# a set of ceilings that FORCE a transcode whatever the client could have played.
+# Lift the ceilings and a capable client gets the file as it sits on disk.
+#
+# WHY A TV ON THE LAN STILL COUNTS AS REMOTE. Plex sorts a client into LAN or
+# remote by matching its address against the LAN Networks list, which defaults to
+# the server's own subnets. plex-gpu holds one LAN address, 192.168.50.236, and
+# the TVs reach it over the tailnet at 100.97.96.88 — an address outside
+# 192.168.50.0/24. Plex therefore files those clients as remote and applies the
+# remote ceilings below to them. See the jump-host note in inventory/hosts.yml for
+# how the tailnet became the path the TVs take.
+#
+# ⚠ THIS LIFTS THE CEILING FOR EVERY REMOTE CLIENT, not only the tailnet ones.
+# An off-site player becomes eligible for the original file, so one large file can
+# take the whole upload link. That is a deliberate choice. The narrower fix —
+# classifying just the tailnet range as LAN and leaving the ceilings standing — is
+# written up in docs/runbooks/plex-direct-play.md along with how to revert.
+#
+# ⚠ THE KEY NAMES BELOW ARE NOT GROUND-TRUTHED AGAINST THE SERVER. /:/prefs
+# accepts an unknown key, answers 200, and changes nothing, so a misspelling reads
+# as success — the same silent no-op the scheduled-scan assertion in plex-bootstrap
+# exists to catch. This role asserts every key EXISTS before it writes one, and
+# asserts every value READS BACK after. A wrong key fails the play and names
+# itself; it does not pass quietly.
+#
+# Changing a preference over /:/prefs applies live. Plex needs no restart, and a
+# stream already running keeps the decision it started with, so this role holds no
+# in-use guard.
+plex_settings_port: 32400
+plex_settings_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# Treat a remote address as though it sat on the LAN. This drops the client onto
+# the local-quality path, which carries no bitrate ceiling.
+plex_settings_treat_wan_as_local: true
+
+# Remote stream ceilings, in kbps. 0 means no ceiling, which is the value that
+# leaves a capable client eligible for the original file. Set a number here to put
+# the ceiling back for every remote client at once.
+plex_settings_wan_per_stream_max_kbps: 0
+plex_settings_wan_total_max_kbps: 0
+
+# The keys this role writes, paired with the values above. Add a key here and the
+# existence check, the write, the comparison and the read-back assertion all pick it
+# up.
+#
+# ⚠ ONLY BOOLS AND NUMBERS BELONG HERE AS WRITTEN. The comparison folds true to 1 and
+# false to 0 so a converged bool does not read as drifted. That rewrite applies to the
+# whole value, so a text setting holding "true" or "false" — a path, a network list —
+# would compare wrong. Drop the normalise step to a per-type rule before you add one.
+plex_settings_prefs:
+  TreatWanIpAsLocal: "{{ 1 if plex_settings_treat_wan_as_local | bool else 0 }}"
+  WanPerStreamMaxUploadRate: "{{ plex_settings_wan_per_stream_max_kbps }}"
+  WanTotalMaxUploadRate: "{{ plex_settings_wan_total_max_kbps }}"

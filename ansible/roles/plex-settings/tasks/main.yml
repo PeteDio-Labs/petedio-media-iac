@@ -1,0 +1,201 @@
+---
+# ------------------------------------------------------------------- the token --
+# The token lives in Preferences.xml on the server. Read it from there rather than
+# storing a copy: the plex-connect role made the same call, and a second copy is a
+# second thing to rotate and a third place to leak it from.
+- name: Plex settings — read Preferences.xml
+  ansible.builtin.slurp:
+    src: "{{ plex_settings_prefs_path }}"
+  register: plex_settings_prefs_raw
+  no_log: true
+  check_mode: false
+
+# ⚠ regex_findall, NOT regex_search WITH A GROUP ARGUMENT. The group form behaves
+# differently depending on how YAML quoted the expression: `regex_search(p, '\\1')`
+# resolves the capture group in a double-quoted scalar and silently fails to match
+# in a folded (`>-`) one, where ansible-core then raises "'NoneType' object has no
+# attribute 'group'". Verified on ansible-core 2.19.13. regex_findall needs no
+# backslash, so it reads the same under either quoting, and it returns [] rather
+# than raising when nothing matches — which is what makes the `or [...]` fallbacks
+# below work. roles/plex-connect and roles/plex both use the group form inside
+# folded scalars; they are untouched here, but check them before you trust one.
+- name: Plex settings — extract the token
+  ansible.builtin.set_fact:
+    plex_settings_token: >-
+      {{ (plex_settings_prefs_raw.content | b64decode
+          | regex_findall('PlexOnlineToken="([^"]+)"') or ['']) | first }}
+  no_log: true
+
+- name: Plex settings — fail before writing with no token
+  ansible.builtin.assert:
+    that: plex_settings_token | length > 10
+    fail_msg: >-
+      No PlexOnlineToken in {{ plex_settings_prefs_path }} on
+      {{ inventory_hostname }}. Claim the server before you converge its settings.
+
+# ------------------------------------------------------------- measure first --
+# Read what the server holds before writing anything. The media-base timezone
+# incident converted four hosts because the role asserted a baseline it had never
+# measured; the values read here are also what you need to revert.
+#
+# The token goes in a header, not the query string — a query string lands in access
+# logs. The whole prefs document is no_log because it carries more than these three
+# keys.
+- name: Plex settings — read the settings the server reports
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_settings_port }}/:/prefs"
+    headers:
+      X-Plex-Token: "{{ plex_settings_token }}"
+    return_content: true
+    timeout: 15
+  register: plex_settings_before
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Plex settings — resolve the value in force for each key
+  ansible.builtin.set_fact:
+    plex_settings_current: >-
+      {{ plex_settings_current | default({}) | combine({
+           item.key: (plex_settings_before.content
+                      | regex_findall('id="' ~ item.key ~ '"[^>]*value="([^"]*)"')
+                      or ['__absent__']) | first }) }}
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# The load-bearing guard. /:/prefs answers 200 for a key it has never heard of and
+# changes nothing, so a misspelled key would report success and leave the server
+# transcoding. Prove the server knows each key before writing one of them.
+- name: Plex settings — assert the server knows every key this role writes
+  ansible.builtin.assert:
+    that: plex_settings_current[item.key] != '__absent__'
+    fail_msg: >-
+      {{ inventory_hostname }} reports no setting called {{ item.key }}. Writing it
+      would answer 200 and change nothing. List what the server does know with
+      `curl -H "X-Plex-Token: <token>" http://127.0.0.1:{{ plex_settings_port }}/:/prefs`
+      and correct the key in roles/plex-settings/defaults/main.yml.
+    success_msg: "{{ item.key }} is a setting this server knows."
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# ---------------------------------------------------------------- compare --
+# A bool reads back as 1 or as true depending on the build, so normalise both ends.
+# Without this a converged server reads as drifted and the role writes on every run.
+- name: Plex settings — normalise both ends for comparison
+  ansible.builtin.set_fact:
+    plex_settings_now: >-
+      {{ plex_settings_now | default({}) | combine({
+           item.key: plex_settings_current[item.key] | lower
+                     | replace('true', '1') | replace('false', '0') }) }}
+    plex_settings_want: >-
+      {{ plex_settings_want | default({}) | combine({
+           item.key: item.value | string | lower
+                     | replace('true', '1') | replace('false', '0') }) }}
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Plex settings — list the keys that differ
+  ansible.builtin.set_fact:
+    plex_settings_drift: >-
+      {{ (plex_settings_drift | default([]))
+         + ([item.key] if plex_settings_now[item.key] != plex_settings_want[item.key]
+            else []) }}
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Plex settings — report what is in force, and what changes
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.key }}: in force "{{ plex_settings_current[item.key] }}"
+      {{ '-> "' ~ plex_settings_want[item.key] ~ '"'
+         if item.key in plex_settings_drift else '(already converged)' }}
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# ------------------------------------------------------------------- write --
+# Every key goes in one request, because writing a converged value costs nothing
+# and one request is easier to read in a log than three. The drift guard is what
+# makes the role idempotent.
+- name: Plex settings — write the playback limits
+  when: plex_settings_drift | default([]) | length > 0
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_settings_port }}/:/prefs?{{ plex_settings_prefs | urlencode }}"
+    method: PUT
+    headers:
+      X-Plex-Token: "{{ plex_settings_token }}"
+    status_code: [200]
+    timeout: 15
+  no_log: true
+  changed_when: true
+
+# ------------------------------------------------------------- prove it stuck --
+# A --check run never sends the write, so asserting a written value there would fail
+# on a server that is fine. Skip the read-back instead of weakening the assertion.
+- name: Plex settings — read the settings back
+  when: not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_settings_port }}/:/prefs"
+    headers:
+      X-Plex-Token: "{{ plex_settings_token }}"
+    return_content: true
+    timeout: 15
+  register: plex_settings_after
+  changed_when: false
+  no_log: true
+
+- name: Plex settings — resolve the values the server reports back
+  when: not ansible_check_mode
+  ansible.builtin.set_fact:
+    plex_settings_after_values: >-
+      {{ plex_settings_after_values | default({}) | combine({
+           item.key: (plex_settings_after.content
+                      | regex_findall('id="' ~ item.key ~ '"[^>]*value="([^"]*)"')
+                      or ['__absent__']) | first | lower
+                     | replace('true', '1') | replace('false', '0') }) }}
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Plex settings — assert every value stuck
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: plex_settings_after_values[item.key] == plex_settings_want[item.key]
+    fail_msg: >-
+      {{ item.key }} reads back as "{{ plex_settings_after_values[item.key] }}",
+      not "{{ plex_settings_want[item.key] }}". The server answers 200 for a key it
+      does not know, so read this as a wrong key or a value Plex refused — not as a
+      transient failure to retry.
+    success_msg: '{{ item.key }} = {{ plex_settings_want[item.key] }}'
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Plex settings — report the converged state
+  when: not ansible_check_mode
+  ansible.builtin.debug:
+    msg: "{{ item.key }} = {{ plex_settings_after_values[item.key] }}"
+  loop: "{{ plex_settings_prefs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# What the numbers above do NOT tell you, stated once so the play does not read as
+# proof that Direct Play happens.
+- name: Plex settings — report what is still out of this role's reach
+  when: not ansible_check_mode
+  ansible.builtin.debug:
+    msg:
+      - >-
+        A remote client is eligible for the original file where the ceilings read 0
+        and TreatWanIpAsLocal reads 1. Eligible is not the same as chosen.
+      - >-
+        To see what a real stream does, read /status/sessions or Settings >
+        Dashboard and look for "Direct Play" rather than "Transcode".
+      - >-
+        A player set below Original quality asks for a transcode and the server
+        obliges. Fix that on the device, under Settings > Quality — it lives in the
+        client app, so no role here reaches it.

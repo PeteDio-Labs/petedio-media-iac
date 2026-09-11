@@ -1,0 +1,39 @@
+---
+# configure-plex-settings.yml — lift the limits that force Plex to re-encode, so a
+# capable client receives the original file (Direct Play).
+#
+# RUN IT BY HAND. No trigger applies this. `ansible/**` sits in the push
+# paths-ignore of .github/workflows/terraform.yml, so merging this to main changes
+# nothing on the server:
+#
+#     cd ansible
+#     ansible-playbook playbooks/configure-plex-settings.yml --check
+#     ansible-playbook playbooks/configure-plex-settings.yml
+#
+# A --check run reads the settings in force and reports what would change. It sends
+# no write, so it skips the read-back assertion.
+#
+# WHAT IT CHANGES. Plex has no Direct Play switch. The server's part is a set of
+# ceilings that force a transcode whatever the client could play, and this playbook
+# lifts them for remote clients. The TVs reach 236 over the tailnet, which puts them
+# outside 192.168.50.0/24 and so counts them as remote — that is why a client on
+# your own network was getting the remote treatment.
+#
+# ⚠ THE CEILINGS COME OFF FOR OFF-SITE CLIENTS TOO, not only the tailnet. One large
+# file can then take the whole upload link. docs/runbooks/plex-direct-play.md holds
+# the narrower alternative and the revert.
+#
+# SEPARATE FROM bootstrap-plex-gpu.yml ON PURPOSE. That playbook installs Plex on a
+# fresh container and is documented run-once; this one converges a setting on a
+# claimed server and is safe to re-run. Folding Plex into media-roles.yml stays the
+# open question PET-354 left alone.
+#
+# Writing over /:/prefs applies live. Plex needs no restart, and a stream already
+# running keeps the decision it started with, so this holds no in-use guard.
+
+- name: Converge the Plex playback limits
+  hosts: plex-gpu
+  become: true
+  gather_facts: false
+  roles:
+    - plex-settings
