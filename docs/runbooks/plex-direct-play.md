@@ -1,9 +1,23 @@
 # Runbook — Direct Play on plex-gpu
 
-**Status: the role is written and validated against fixtures, not against 236.** No
-one has run it on the server, so the first run is also the first ground-truthing of
-the three preference keys. The role fails loudly if a key is wrong — see
-§ "If the keys are wrong".
+> **Status (2026-09-11, PET-394): on 236 this playbook changes nothing.** Its
+> `--check` run against the server confirmed that all three keys exist and reported
+> each one already converged. Plex's own `/:/prefs` shows why:
+>
+> - `TreatWanIpAsLocal` is `1`, which is its default.
+> - `WanPerStreamMaxUploadRate` and `WanTotalMaxUploadRate` are `0`, their
+>   defaults, which means no ceiling.
+> - `LanNetworksBandwidth` already lists `192.168.50.0/24`, `192.168.86.0/24` and
+>   `100.64.0.0/10`.
+>
+> The premise under Context does not hold either. The Apple TV is not on the
+> tailnet; it reaches Plex through the pete-pi-1 proxy at `192.168.86.46`. Its
+> transcodes on 2026-09-11 came from the client: a fallback to Plex Relay, which
+> caps a stream at 2 Mbps, and its own requests for `directPlay=0`, on the LAN as
+> well, for MKV files. See `vault/Systems/plex-on-the-mesh.md`.
+>
+> Until 2026-09-11 this line said the role was validated against fixtures, not
+> against 236, and that no one had run it on the server.
 
 Plex has **no Direct Play switch.** Direct Play is the outcome of a negotiation
 between the client and the server. The server's only part in that negotiation is a

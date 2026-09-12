@@ -19,19 +19,23 @@
   roles:
     - servarr
 
-# ⚠ DISABLED, NOT DELETED — this play has no host (PET-354).
-# It applied the `plex` role to plex (103), which died with pve01 on 2026-09-03.
-# The only Plex is plex-gpu (236), and it is NOT a drop-in target: 103 was captured
-# in place by the `plex` role, while 236 is built by bootstrap-plex-gpu.yml. Whether
-# the `plex` role can assert 236 without fighting that bootstrap is an open question,
-# so retargeting it is a decision, not a rename. Until it is answered, `hosts: plex`
-# would silently match nothing and report success — the failure mode this audit was
-# convened to remove. Left commented so the omission is visible.
-# - name: Plex
-#   hosts: plex-gpu
-#   gather_facts: false
-#   roles:
-#     - plex
+# plex-gpu (236), the only Plex since 103 died with pve01 on 2026-09-03.
+#
+# PET-354 left this play commented out over one open question: would the `plex`
+# role fight bootstrap-plex-gpu.yml, which built 236? It does not (PET-394). The
+# role owns the service state and the package upgrade; the bootstrap owns the apt
+# source, the signing key and the scan settings; plex-settings owns the playback
+# limits. Measured against 236 on 2026-09-10: the read-only path reports
+# changed=0, and the apply path took 236 from 1.43.3 to 1.43.4 with the library,
+# GPU access and apt configuration unchanged.
+#
+# 236 stays outside the `media` group, so media-base does not converge it. This
+# play names the host instead; folding it into `media` is a separate decision.
+- name: Plex
+  hosts: plex-gpu
+  gather_facts: false
+  roles:
+    - plex
 
 - name: Seerr
   hosts: seerr
@@ -45,8 +49,11 @@
   roles:
     - qbittorrent-vpn
 
+# gpu-media is listed so the report still renders under --limit plex-gpu. With
+# `hosts: media` alone that limit matched nothing here, and the run ended with no
+# report at all.
 - name: Update report
-  hosts: media
+  hosts: media:gpu-media
   gather_facts: false
   tasks:
     - name: Render the media stack update report

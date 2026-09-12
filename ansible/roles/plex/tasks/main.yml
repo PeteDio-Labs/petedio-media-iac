@@ -1,22 +1,30 @@
-# plex — Plex Media Server on LXC 103, installed as an apt package.
+# plex — Plex Media Server on plex-gpu (LXC 236), installed as an apt package.
+# 103 ran this role until it died with pve01 on 2026-09-03; PET-394 pointed it at
+# 236, the only Plex since.
 #
 # Unlike the *arr apps, Plex has no in-app updater on Linux server builds (that
 # is a Plex Pass desktop feature), so apt IS the update mechanism.
 #
-# Stale-source note: this host carried TWO Plex apt sources —
+# This role owns two things: the service state and the package upgrade. The apt
+# source, its signing key and the scan settings belong to plex-bootstrap, which
+# built 236, and the playback limits belong to plex-settings.
+#
+# Stale-source note, from 103: that host carried TWO Plex apt sources —
 #   plexmediaserver.sources -> repo.plex.tv/deb      (current, serves 1.43.x)
 #   plex.list               -> downloads.plex.tv/deb (legacy, stuck on 1.42.2)
-# Both resolve, and apt picks the highest version, so it was harmless *today* —
-# but it is a live footgun: if the legacy repo ever outranks the current one
-# (pin, or the current repo 404s) apt would happily "upgrade" Plex backwards.
-# The removal is declared in host_vars/plex.yml via media_base_stale_apt_sources
-# so the mechanism is reusable rather than special-cased here.
+# If the legacy repo ever outranks the current one (a pin, or the current repo
+# 404s), apt would happily "upgrade" Plex backwards. 236 carries only the current
+# source (checked 2026-09-10).
+#
+# ⚠ Captures use regex_findall, never regex_search with a '\1' argument.
+# roles/plex-settings records that the group form fails inside folded scalars on
+# ansible-core 2.19.13; regex_findall reads the same under any quoting.
 ---
-# NOT unconditionally started. 103 is the cold spare while plex-gpu (236) serves,
-# and a hardcoded `state: started` here would silently resurrect it on the next
-# configure-media run — putting two Plex servers back on the network, which is
-# how clients end up on the wrong one with nobody able to tell from the couch.
-# plex-primary owns this decision; this role only honours it.
+# NOT unconditionally started. plex-primary.yml runs exactly one Plex at a time,
+# and a hardcoded `state: started` here would resurrect a stopped standby — two
+# servers on the network, and clients on whichever one they saw last. With 103
+# gone there is no standby: plex_primary defaults to plex-gpu, so this keeps 236
+# started and enabled. plex-primary owns the decision; this role only honours it.
 - name: Plex — service state follows the primary/standby role
   ansible.builtin.systemd_service:
     name: "{{ plex_service }}"
@@ -40,9 +48,9 @@
 - name: Plex — resolve installed and candidate versions
   ansible.builtin.set_fact:
     plex_current: >-
-      {{ plex_apt_policy.stdout | regex_search('Installed:\s*(\S+)', '\1') | first | default('none') }}
+      {{ (plex_apt_policy.stdout | regex_findall('Installed:\s*(\S+)') or ['none']) | first }}
     plex_candidate: >-
-      {{ plex_apt_policy.stdout | regex_search('Candidate:\s*(\S+)', '\1') | first | default('none') }}
+      {{ (plex_apt_policy.stdout | regex_findall('Candidate:\s*(\S+)') or ['none']) | first }}
 
 - name: Plex — record update report
   ansible.builtin.set_fact:
@@ -60,24 +68,46 @@
     - plex_candidate != plex_current
     - plex_candidate != 'none'
   block:
-    # Upgrading restarts the server and kills any in-flight transcode, so check
-    # for viewers first. The token lives in Preferences.xml; keep it out of logs
-    # and out of the URL (query strings land in access logs) by sending it as a
-    # header.
+    # Upgrading restarts the server and kills any in-flight transcode, so look for
+    # viewers first, and keep "nobody is watching" apart from "I could not tell".
+    # Until PET-394 this guard read any non-200 answer as zero viewers, so a running
+    # Plex that rejected the token would have been upgraded mid-stream. That is the
+    # bug docs/GOTCHAS.md records for the lifecycle guards, in the update path.
+    #
+    #   idle     measured nobody, or the server is not running  -> upgrade
+    #   in-use   measured somebody                              -> skip
+    #   unknown  could not measure                              -> skip
+    #
+    # -e plex_update_force=true upgrades whatever the guard says. guard.yml holds
+    # the classification, and tests/plex-update-guard.yml feeds it recorded answers.
+    - name: Plex — is the unit running?
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ plex_service }}"]
+      register: plex_unit
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # The token lives in Preferences.xml. Keep it out of logs and out of the URL
+    # (query strings land in access logs) by sending it as a header.
     - name: Plex — read PlexOnlineToken
       ansible.builtin.slurp:
         src: "{{ plex_prefs_path }}"
       register: plex_prefs_raw
+      when: (plex_unit.stdout | trim) == 'active'
+      failed_when: false
       check_mode: false
       no_log: true
 
     - name: Plex — extract token
       ansible.builtin.set_fact:
         plex_token: >-
-          {{ (plex_prefs_raw.content | b64decode
-              | regex_search('PlexOnlineToken="([^"]+)"', '\1') | first | default('')) }}
+          {{ (plex_prefs_raw.content | default('') | b64decode
+              | regex_findall('PlexOnlineToken="([^"]+)"') or ['']) | first }}
+      when: (plex_unit.stdout | trim) == 'active'
       no_log: true
 
+    # A failed read is not an error here: guard.yml turns it into 'unknown'.
     - name: Plex — count active playback sessions
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ plex_port }}/status/sessions"
@@ -86,28 +116,29 @@
         return_content: true
         timeout: 15
       register: plex_sessions
+      when: (plex_unit.stdout | trim) == 'active'
       changed_when: false
+      failed_when: false
       check_mode: false
       no_log: true
-      # A standby server is stopped, so this connection is refused. That is not a
-      # failure — a server that is not running has no viewers to protect. Without
-      # this the whole update block aborts on the cold spare, and the spare you
-      # are keeping for a failover quietly stops receiving patches.
-      failed_when: false
 
-    - name: Plex — resolve active session count
-      ansible.builtin.set_fact:
-        plex_active_sessions: >-
-          {{ (plex_sessions.content | default('') | regex_search('size="(\d+)"', '\1') | first | default('0')) | int
-             if (plex_sessions.status | default(0)) == 200 else 0 }}
+    - name: Plex — classify the guard
+      ansible.builtin.include_tasks: guard.yml
 
-    - name: Plex — skip update, someone is watching
+    - name: Plex — skip update, guard says {{ plex_update_guard }}
       ansible.builtin.debug:
         msg: >-
-          SKIPPED: {{ plex_active_sessions }} active playback session(s).
+          SKIPPED: {{ plex_update_guard_reason }}.
           Re-run with -e plex_update_force=true to update anyway.
       when:
-        - plex_active_sessions | int > 0
+        - plex_update_guard != 'idle'
+        - not (plex_update_force | bool)
+
+    - name: Plex — say why in the update report
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({'note': 'update skipped, ' ~ plex_update_guard_reason}) }}"
+      when:
+        - plex_update_guard != 'idle'
         - not (plex_update_force | bool)
 
     - name: Plex — upgrade {{ plex_package }} to {{ plex_candidate }}
@@ -116,7 +147,7 @@
         state: latest
         only_upgrade: true
         update_cache: false
-      when: plex_active_sessions | int == 0 or (plex_update_force | bool)
+      when: plex_update_guard == 'idle' or (plex_update_force | bool)
       register: plex_upgraded
 
     - name: Plex — verify the server answers on the new build

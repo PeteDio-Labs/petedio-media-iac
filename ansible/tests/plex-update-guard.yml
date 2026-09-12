@@ -1,0 +1,61 @@
+# Regression test for roles/plex/tasks/guard.yml, the Plex update guard (PET-394).
+#
+#   cd ansible
+#   ansible-playbook tests/plex-update-guard.yml
+#
+# Runs on localhost and touches nothing. It feeds guard.yml recorded answers,
+# including failures a live server will not produce on demand, and asserts the
+# verdict for each. Each line also reports what the guard before PET-394 concluded
+# from the same answer, which is how its fail-open case was shown rather than argued.
+#
+# Expect one 'fatal' line and rescued=1 in the recap: that is the old expression
+# raising on the 200-without-a-count answer, which the rescue records as 'crashed'.
+- name: Plex update guard — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    plex_service: plexmediaserver
+    guard_cases:
+      - name: unit stopped
+        unit: inactive
+        sessions: {skipped: true}
+        want: idle
+      - name: nobody watching
+        unit: active
+        sessions:
+          status: 200
+          content: '<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="0"></MediaContainer>'
+        want: idle
+      - name: two watching
+        unit: active
+        sessions:
+          status: 200
+          content: '<MediaContainer size="2"><Video type="episode"/><Video type="movie"/></MediaContainer>'
+        want: in-use
+      - name: token rejected
+        unit: active
+        sessions:
+          status: 401
+          content: '<html><head><title>Unauthorized</title></head></html>'
+        want: unknown
+      - name: no response
+        unit: active
+        sessions:
+          status: -1
+          msg: 'Status code was -1 and not [200]: Request failed: <urlopen error [Errno 111] Connection refused>'
+        want: unknown
+      - name: 200 without a count
+        unit: active
+        sessions:
+          status: 200
+          content: '<html><body>maintenance</body></html>'
+        want: unknown
+  tasks:
+    - name: Classify each recorded answer
+      ansible.builtin.include_tasks: plex-update-guard-case.yml
+      loop: "{{ guard_cases }}"
+      loop_control:
+        loop_var: guard_case
+        label: "{{ guard_case.name }}"

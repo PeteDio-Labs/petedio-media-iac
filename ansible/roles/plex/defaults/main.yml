@@ -1,4 +1,4 @@
-# plex 103 — Plex Media Server, apt-installed from repo.plex.tv.
+# plex — Plex Media Server on plex-gpu (236), apt-installed from repo.plex.tv.
 ---
 plex_package: plexmediaserver
 plex_service: plexmediaserver
@@ -8,6 +8,7 @@ plex_port: 32400
 plex_prefs_path: >-
   /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
 
-# Refuse to restart Plex while someone is watching. Override with
-# `-e plex_update_force=true` to update regardless.
+# Refuse to restart Plex while someone is watching, or while the role cannot
+# tell whether anyone is (PET-394). Override with `-e plex_update_force=true` to
+# update regardless.
 plex_update_force: false

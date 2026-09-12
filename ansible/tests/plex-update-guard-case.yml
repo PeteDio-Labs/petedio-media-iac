@@ -1,0 +1,35 @@
+# One case for tests/plex-update-guard.yml. Included once per recorded answer.
+---
+- name: "{{ guard_case.name }} — load the recorded answer"
+  ansible.builtin.set_fact:
+    plex_unit: {stdout: "{{ guard_case.unit }}"}
+    plex_sessions: "{{ guard_case.sessions }}"
+
+- name: "{{ guard_case.name }} — classify"
+  ansible.builtin.include_tasks: ../roles/plex/tasks/guard.yml
+
+# The expression this change replaced, verbatim, on the same answer. It raises
+# rather than decides on some answers, so the rescue records that outcome too.
+- name: "{{ guard_case.name }} — what the guard before PET-394 concluded"
+  block:
+    - name: "{{ guard_case.name }} — old expression"
+      ansible.builtin.set_fact:
+        guard_old: >-
+          {{ (plex_sessions.content | default('') | regex_search('size="(\d+)"', '\1') | first | default('0')) | int
+             if (plex_sessions.status | default(0)) == 200 else 0 }}
+  rescue:
+    - name: "{{ guard_case.name }} — old expression raised"
+      ansible.builtin.set_fact:
+        guard_old: crashed
+
+- name: "{{ guard_case.name }} — assert the verdict"
+  ansible.builtin.assert:
+    that: plex_update_guard == guard_case.want
+    fail_msg: >-
+      {{ guard_case.name }}: guard says {{ plex_update_guard }}
+      ({{ plex_update_guard_reason }}), want {{ guard_case.want }}
+    success_msg: >-
+      {{ guard_case.name }}: {{ plex_update_guard }}, {{ plex_update_guard_reason }}.
+      Old guard: {{ 'crashed' if guard_old == 'crashed'
+                    else (guard_old ~ ' viewer(s), so it would '
+                          ~ ('skip' if guard_old | int > 0 else 'upgrade')) }}.
