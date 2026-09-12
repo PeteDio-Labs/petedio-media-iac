@@ -7,9 +7,14 @@
 # The report play at the bottom is the only consumer, so adding a new service is
 # "write a role that sets that fact" and nothing else changes.
 ---
+# Tagged `baseline` so an update run can leave it out (PET-395). media-updates.yml
+# runs with --skip-tags baseline: an update started from Discord must never converge
+# host baseline, and this role's timezone task disagrees with petedio-iac's
+# roles/timezone on four hosts. A run by hand still includes it.
 - name: Media base (all media hosts)
   hosts: media
   gather_facts: true
+  tags: [baseline]
   roles:
     - media-base
 
@@ -62,3 +67,20 @@
       become: false
       ansible.builtin.debug:
         msg: "{{ lookup('template', '../templates/update-report.j2').split('\n') }}"
+
+    # media-updates.yml sets media_update_report_file and prints the file between
+    # markers, which is how pete-bot reads the report back (PET-395). check_mode:
+    # false so a --check run still writes it. It writes only a file on the
+    # controller, never host state, so it reports no change: a read-only check that
+    # says changed=1 is a defect report, and this must not be one.
+    - name: Write the report for the caller
+      run_once: true
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      ansible.builtin.copy:
+        content: "{{ lookup('template', '../templates/update-report.j2') }}"
+        dest: "{{ media_update_report_file }}"
+        mode: "0644"
+      changed_when: false
+      when: media_update_report_file is defined
