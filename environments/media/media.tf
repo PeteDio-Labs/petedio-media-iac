@@ -138,7 +138,12 @@ removed {
 # reach its gateway. petedio-iac's runner.tf carries the same warning for
 # runner-233.
 #
-# NO .86 MESH LEG — IT WAS REMOVED, AND IT MUST NOT COME BACK (PET-332).
+# NO .86 MESH LEG ON vmbr1 — IT MUST NOT COME BACK THERE (PET-332).
+#
+# ⚠ THE PROHIBITION IS ABOUT vmbr1, NOT ABOUT THE MESH. The mesh leg returned on
+# 2026-09-15 on a REAL WIRED NIC (vmbr2), which is a different thing entirely —
+# see the net1_* arguments below. Read the next two paragraphs before assuming
+# this block forbids what the config now does.
 #
 # This container used to hold a real 192.168.86.236 on vmbr1 for native Plex
 # client discovery. vmbr1 on pve02 is not a NIC: it is backed by `vxlan86`, a
@@ -146,19 +151,25 @@ removed {
 # cabled to the .86 mesh — which bridged it into its own mesh bridge.
 #
 # pve01 died on 2026-09-03. pve03 has no mesh bridge and no VXLAN, only vmbr0 on
-# .50 and the wlo1 escape hatch, so nothing terminates that tunnel any more. The
-# live container has already lost its eth1. Re-declaring it would bring up an
-# interface on a tunnel with nothing at the far end, and terraform would report
-# success — which is exactly what it did on every merge from 2026-09-03 to
-# 2026-09-04: `Plan: 0 to add, 1 to change, 0 to destroy`, forever.
+# .50 and the wlo1 escape hatch, so nothing terminates that tunnel any more.
+# Re-declaring eth1 ON vmbr1 would bring up an interface on a tunnel with
+# nothing at the far end, and terraform would report success — which is exactly
+# what it did on every merge from 2026-09-03 to 2026-09-04: `Plan: 0 to add, 1
+# to change, 0 to destroy`, forever. That is still true and still forbidden.
 #
 # ⚠ pve03 now holds pve01's old address, 192.168.50.10. If vxlan86's remote is
 # configured by IP rather than by name, that tunnel now points at pve03 — a
 # different machine that is not on the mesh. Check before reviving any of this.
 #
-# Plex is reached three other ways and needs none of this: the tailnet
-# (100.97.96.88, depends on nothing else), the pete-pi-1 proxy
-# (192.168.86.46:32400), and 192.168.50.236 on the LAN.
+# WHAT CHANGED ON 2026-09-15. pve02 gained a USB-Ethernet adapter cabled
+# directly into the .86 mesh, bridged as vmbr2 (petedio-iac's mesh-usb-bridge
+# role). A wired NIC can bridge other MACs where a WiFi station cannot — 802.11
+# three-address frames are why pve03's wlo1 could never fill this gap — so the
+# container gets a genuine layer-2 mesh presence, not a tunnel and not NAT.
+#
+# The other three routes still exist: the tailnet (100.97.96.88, depends on
+# nothing else), the pete-pi-1 proxy (192.168.86.46:32400), and 192.168.50.236
+# on the LAN. The proxy stays as fallback until the direct leg is proven.
 #
 # WHY 236 AND NOT A 1xx. The 1xx block is the pve01 media stack. This server runs
 # on pve02, so it follows the convention every non-media service uses: a 2xx VMID
@@ -179,7 +190,23 @@ module "plex_gpu" {
   # wired NIC can bridge other MACs where a WiFi station cannot, so this
   # gives Plex a genuine mesh presence again instead of only the pete-pi-1
   # proxy. NOT vmbr1 — that is the dead VXLAN leg to the departed pve01.
-  net1_bridge      = "vmbr2"
+  net1_bridge = "vmbr2"
+  # 192.168.86.236 IS NOT AN ARBITRARY CHOICE. plex.tv still advertises this
+  # exact address for this server, and Plex cannot correct it: every publish
+  # since 2026-09-10 returns 403 ("Updating device connections failed", state
+  # "Mapped - Not Published (Double NAT)"), because .50 is NATed behind .86.
+  # The address was this container's mesh leg over the pve01 VXLAN until that
+  # node died and PET-332 removed it, which is why the published entry is
+  # stale rather than wrong.
+  #
+  # Restoring the SAME address makes the already-published entry valid again,
+  # so no publish is needed. Clients that currently try it, fail, and fall back
+  # to Plex Relay — capped at 2 Mbps SD (videoBitrate=2000) — reach the server
+  # directly instead. That Relay fallback is the reported playback problem.
+  #
+  # ⚠ NO net1_gateway, deliberately. The .50 leg holds the default route; a
+  # second default gateway here would break the container's egress.
+  net1_address     = "192.168.86.236/24"
   firewall         = true
   cores            = 4
   memory_dedicated = 4096
