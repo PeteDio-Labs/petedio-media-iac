@@ -21,6 +21,19 @@ media_health_timeout: 180
 # downloading). Override with -e media_lifecycle_force=true.
 media_lifecycle_force: false
 
+# Which in-use probe to run before stopping this host, named in host_vars as
+# `media_in_use_probe: plex`. Empty means the host has no in-use concept and is
+# freely stoppable.
+#
+# ⚠ THE ROLE MUST NOT KEEP ITS OWN LIST OF WHICH HOSTS GET A PROBE. It did, as
+# `when: inventory_hostname in ['plex', 'qbittorrent-vpn']`, and `plex` stopped
+# existing in PET-354 when 103 died. The list still matched syntactically, so
+# nothing warned: the only Plex simply ran with no guard, and every stack-down
+# reached the stop task with media_in_use_state at its `idle` default. A host
+# that is renamed or replaced now loses its probe only by deleting the line that
+# names it (PET-447).
+media_in_use_probe: ""
+
 # The guard verdict. THREE states, and the third is the one that matters:
 #   idle     — measured, nothing in use        -> safe to stop
 #   in-use   — measured, something is in use   -> skip, and say what
@@ -30,8 +43,9 @@ media_lifecycle_force: false
 # the very stop the guard exists to prevent. When a check's job is to withhold
 # permission, "I don't know" has to resolve to "no".
 #
-# The default is 'idle' because only plex and qbittorrent-vpn run a guard at all
-# (see tasks/main.yml). The other five hosts have no in-use concept and must stay
-# freely stoppable — they are not 'unknown', there is simply nothing to ask.
+# The default is 'idle' because only the hosts that declare a media_in_use_probe
+# run a guard at all — plex-gpu and qbittorrent-vpn today. The other four have no
+# in-use concept and must stay freely stoppable: they are not 'unknown', there is
+# simply nothing to ask.
 media_in_use_state: idle
 media_in_use_reason: "no in-use check applies to this host"
