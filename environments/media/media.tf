@@ -174,6 +174,12 @@ module "plex_gpu" {
   ipv4_address     = "192.168.50.236/24"
   gateway          = "192.168.50.1"
   bridge           = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
+  # eth1 on vmbr2: pve02's new USB-Ethernet adapter, wired directly to the
+  # .86 mesh (petedio-iac's mesh-usb-bridge role brings the bridge up). A
+  # wired NIC can bridge other MACs where a WiFi station cannot, so this
+  # gives Plex a genuine mesh presence again instead of only the pete-pi-1
+  # proxy. NOT vmbr1 — that is the dead VXLAN leg to the departed pve01.
+  net1_bridge      = "vmbr2"
   firewall         = true
   cores            = 4
   memory_dedicated = 4096
