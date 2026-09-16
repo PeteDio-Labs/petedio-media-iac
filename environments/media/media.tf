@@ -169,11 +169,11 @@ removed {
 module "plex_gpu" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id            = 236
-  hostname         = "plex-gpu"
-  ipv4_address     = "192.168.50.236/24"
-  gateway          = "192.168.50.1"
-  bridge           = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
+  vm_id        = 236
+  hostname     = "plex-gpu"
+  ipv4_address = "192.168.50.236/24"
+  gateway      = "192.168.50.1"
+  bridge       = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
   # eth1 on vmbr2: pve02's new USB-Ethernet adapter, wired directly to the
   # .86 mesh (petedio-iac's mesh-usb-bridge role brings the bridge up). A
   # wired NIC can bridge other MACs where a WiFi station cannot, so this
