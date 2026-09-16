@@ -1,0 +1,25 @@
+# Blast radius — label this pull request with what merging it can actually do.
+#
+# The rules live in petedio-iac (PET-463). This file names the caller and
+# nothing else, so a tier changes in one place rather than in five that drift.
+# The check still grades against THIS repo: the classifier reads the caller's
+# own checkout, so each repo's live-apply set is derived from its own workflows.
+#
+# To change what a tier means, edit petedio-iac/scripts/pr-blast-radius.py.
+name: blast-radius
+
+on:
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  blast-radius:
+    uses: PeteDio-Labs/petedio-iac/.github/workflows/blast-radius.yml@main
+    permissions:
+      contents: read
+      # The ceiling for the called workflow. Without this the label step has no
+      # token to write with. A fork's pull request is read-only regardless, and
+      # the called workflow skips labelling for those.
+      pull-requests: write
