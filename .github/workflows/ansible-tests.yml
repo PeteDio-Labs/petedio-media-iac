@@ -1,0 +1,86 @@
+# Ansible guard tests — the recorded-answer harness under ansible/tests/, in CI.
+#
+# WHY THIS WORKFLOW EXISTS. The harness was written under PET-394 and then run by
+# hand, twice, by the session that wrote it. Nothing ran it again. A test nobody
+# runs is documentation with a worse failure mode: it rots into red and no one
+# learns, or it stays green while the thing it covers is deleted. Two of the
+# three guards it covers were rewritten between PET-394 and PET-456 with the
+# harness untouched (PET-456).
+#
+# GITHUB-HOSTED, NEVER THE HOMELAB RUNNER. Same split terraform.yml draws: this
+# repo is public, a pull request runs the PR's own code, and the self-hosted
+# runner sits inside the homelab. Every play here declares `connection: local`
+# and `become: false`, contacts no media host and needs no secret, so a hosted
+# ubuntu-latest runs the whole suite. Keep both halves — a test that starts
+# needing the LAN belongs in media-updates.yml, not here.
+#
+# ⚠ THIS FILE'S OWN MERGE RUNS TERRAFORM. terraform.yml's push `paths-ignore`
+# covers **/*.md, docs/**, scripts/** and ansible/** — not .github/workflows/**.
+# So merging any change to this file triggers plan+apply on the LAN runner while
+# MEDIA_APPLY_ENABLED is true. That deny-list fails OPEN on purpose (see the note
+# at the top of terraform.yml); adding .github/** to it would also stop a change
+# to the apply job itself from ever applying. Expect the run; read its plan.
+name: ansible-tests
+
+# UNFILTERED ON PURPOSE, both triggers, for the reason terraform.yml gives for
+# its PR half: the job is hosted, under a minute, and costs nothing, so keeping
+# it reporting on every PR means turning on a branch-protection required check
+# later (PET-457) can never hang a PR waiting for a run a `paths` filter
+# suppressed. The push half is what makes "green on main" a fact you can read.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # Pinned to the version media-updates.yml runs these plays on, so a green
+      # test here means green under the interpreter that does the real work.
+      - name: Install ansible-core
+        run: pip install -q 'ansible-core==2.20.4'
+
+      # No test includes a role's tasks/main.yml today, so nothing needs a
+      # collection. Install them anyway: the natural next test does include one,
+      # and without this it fails with "couldn't resolve module community.docker",
+      # which reads as a broken repo rather than a missing dependency.
+      - name: Install collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      # A GLOB, not a list. tests/ is the unit of work: drop a playbook in and CI
+      # runs it, with no second edit here to forget. `tests/cases/` holds the
+      # per-case task lists, which are not playbooks — `ansible-playbook` on one
+      # fails with "playbook must be a list of plays", which is why they moved
+      # into a subdirectory instead of living beside the drivers.
+      #
+      # The `found` check is the point of the whole step. A glob that matches
+      # nothing exits 0, and a green job that ran no tests is the exact
+      # reports-success-does-nothing failure this repo keeps paying for.
+      - name: Run every tests/*.yml
+        run: |
+          shopt -s nullglob
+          found=0
+          for t in tests/*.yml; do
+            found=1
+            echo "::group::$t"
+            ansible-playbook -i inventory/hosts.yml "$t"
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no playbooks matched ansible/tests/*.yml — the suite ran nothing"
+            exit 1
+          fi

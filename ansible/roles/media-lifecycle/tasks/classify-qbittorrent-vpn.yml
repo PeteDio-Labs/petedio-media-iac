@@ -1,0 +1,58 @@
+# classify-qbittorrent-vpn.yml — turn the answers in-use-qbittorrent-vpn.yml
+# collected into a verdict. Pure logic, no I/O, so
+# tests/media-lifecycle-qbit-probe.yml can feed it recorded answers — a docker
+# daemon that does not answer, a container that returns "Forbidden" with rc=0,
+# a curl that times out. None of those can be produced on demand against the
+# live stack, and they are the whole reason the third state exists (PET-456).
+#
+# In:  lifecycle_qbit_ps      register of `docker compose ps -q --status running`
+#      lifecycle_qbit_active  register of the in-namespace torrents/info call
+#                             (skipped, so stdout-less, when the project is down)
+# Out: media_in_use_state     idle | in-use | unknown
+#      media_in_use_reason    one line, for the refusal message and the report
+---
+- name: qbit — read the probe's inputs
+  ansible.builtin.set_fact:
+    lifecycle_qbit_docker_ok: "{{ (lifecycle_qbit_ps.rc | default(1)) == 0 }}"
+    lifecycle_qbit_project_up: >-
+      {{ (lifecycle_qbit_ps.rc | default(1)) == 0
+         and (lifecycle_qbit_ps.stdout | default('') | trim) != '' }}
+    # A JSON array is the ONLY answer that counts as having measured anything.
+    # "Forbidden" is a perfectly successful HTTP response as far as curl is
+    # concerned, so rc alone would not catch it — which is precisely how the old
+    # guard read an auth failure as "zero torrents downloading".
+    lifecycle_qbit_ok: >-
+      {{ (lifecycle_qbit_active.rc | default(1)) == 0
+         and (lifecycle_qbit_active.stdout | default('') | trim).startswith('[') }}
+
+# Three branches, in this order, and the order carries the meaning:
+#   docker did not answer          -> unknown. That is not "nothing is downloading".
+#   docker answered, project down  -> idle. Nothing can be downloading when nothing
+#                                     is running, and this branch is what keeps
+#                                     re-running stack-down.yml idempotent rather
+#                                     than refusing on an already-stopped service.
+#   project up                     -> the torrent list decides, and only a JSON
+#                                     array counts as having read it.
+- name: qbit — record in-use state
+  ansible.builtin.set_fact:
+    media_in_use_state: >-
+      {{ 'unknown' if not (lifecycle_qbit_docker_ok | bool)
+         else 'idle' if not (lifecycle_qbit_project_up | bool)
+         else ('in-use' if ((lifecycle_qbit_active.stdout | from_json | length) > 0) else 'idle')
+           if (lifecycle_qbit_ok | bool)
+         else 'unknown' }}
+    media_in_use_reason: >-
+      {{ ('could not query the compose project at ' ~ qbit_dir
+          ~ ' (rc=' ~ (lifecycle_qbit_ps.rc | default('?'))
+          ~ ', "' ~ ((lifecycle_qbit_ps.stderr | default('') | trim)[:80]) ~ '")')
+         if not (lifecycle_qbit_docker_ok | bool)
+         else ('the ' ~ qbit_dir ~ ' compose project has no running services')
+         if not (lifecycle_qbit_project_up | bool)
+         else ((lifecycle_qbit_active.stdout | from_json | length) ~ ' torrent(s) downloading')
+           if (lifecycle_qbit_ok | bool)
+         else ('the compose project is up but ' ~ qbit_container
+               ~ ' did not return a torrent list (rc='
+               ~ (lifecycle_qbit_active.rc | default('?')) ~ ', answered: "'
+               ~ ((lifecycle_qbit_active.stdout | default('') | trim)[:60])
+               ~ ((lifecycle_qbit_active.stderr | default('') | trim)[:60])
+               ~ '") — that is NOT a confirmation that nothing is downloading') }}

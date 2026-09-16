@@ -1,0 +1,31 @@
+# One case for tests/media-lifecycle-qbit-probe.yml. Included once per recorded answer.
+---
+- name: "{{ probe_case.name }} — load the recorded registers"
+  ansible.builtin.set_fact:
+    lifecycle_qbit_ps: "{{ probe_case.ps }}"
+    lifecycle_qbit_active: "{{ probe_case.active }}"
+    media_in_use_state: unset
+    media_in_use_reason: unset
+
+- name: "{{ probe_case.name }} — classify"
+  ansible.builtin.include_tasks: ../../roles/media-lifecycle/tasks/classify-qbittorrent-vpn.yml
+
+- name: "{{ probe_case.name }} — what the role would do"
+  ansible.builtin.set_fact:
+    probe_action: >-
+      {{ 'STOP' if media_in_use_state == 'idle'
+         else 'skip' if media_in_use_state == 'in-use'
+         else 'REFUSE' }}
+
+- name: "{{ probe_case.name }} — assert the verdict"
+  ansible.builtin.assert:
+    that:
+      - media_in_use_state == probe_case.want
+      - probe_action == probe_case.want_action
+    fail_msg: >-
+      {{ probe_case.name }}: probe says {{ media_in_use_state }}
+      ({{ media_in_use_reason }}) and the role would {{ probe_action }};
+      want {{ probe_case.want }} / {{ probe_case.want_action }}.
+    success_msg: >-
+      {{ probe_case.name }}: {{ media_in_use_state }} — {{ media_in_use_reason }}.
+      The role would {{ probe_action }}.
