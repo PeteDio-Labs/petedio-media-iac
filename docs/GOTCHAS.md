@@ -120,10 +120,12 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `--limit`-scoped role hides its wrong assumptions indefinitely.**
 - **`changed=N` on a supposedly read-only run is a defect report** — chase it
   before anything else.
-- **Servarr apps update themselves.** sonarr/radarr/lidarr/prowlarr all report
+- **Servarr apps update themselves.** sonarr/radarr/prowlarr all report
   `packageUpdateMechanism: builtIn`; POST `{"name":"ApplicationUpdate"}` to
   `/api/<v>/command` is the vendor path — do not hand-roll tarball extraction.
-  Note the API version split: **sonarr/radarr are v3, lidarr/prowlarr are v1**.
+  Note the API version split: **sonarr/radarr are v3, prowlarr is v1**. Lidarr was
+  the fourth app here and the other v1; it went with LXC 100 in PET-319, so a loop
+  over "the four *arrs" now over-counts by one.
 - **Docker Hub rate-limits anonymous pulls (100/6h/IP).** For qbittorrent-vpn
   this breaks *both* the digest check and the pull with HTTP 429. Treat an
   unresolvable remote digest as **unknown, never as up-to-date**. compose aborts
@@ -132,10 +134,9 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   the homelab Zot pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
   defaults) until registry-106 died with pve01; it is down with no blob store left
   (PET-389), so pulls through it fail until it is rebuilt or `qbit_registry` is repointed
-  at upstream. The original fix
-  defaults), including the `lscr.io` one, which is not Hub-capped but benefits from
-  the same locality. The cache is on-demand — the first pull of a tag still fetches
-  from upstream.
+  at upstream. The original fix covered all three images, the `lscr.io` one included,
+  which is not Hub-capped but benefits from the same locality. The cache is
+  on-demand — the first pull of a tag still fetches from upstream.
 - **Plex has no in-app updater on Linux server builds** — apt is the mechanism.
   The host also carried a stale second Plex repo (`plex.list` →
   `downloads.plex.tv`, pinned to the 1.42.2 line) alongside the current
@@ -166,14 +167,25 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   update of an image that genuinely needs it — on a different, unthrottled
   registry. Pull only the services the digest check flagged.
 
-## The in-use guards cannot say "I could not tell" (found 2026-08-13)
+## The in-use guards could not say "I could not tell" (found 2026-08-13, fixed in `fdc8c8c`)
+
+> **Fixed.** Both guards carry three states — `in-use`, `idle`, `unknown` — and
+> `roles/media-lifecycle/tasks/main.yml` **fails the stop** on `unknown` unless you
+> pass `-e media_lifecycle_force=true`. `fdc8c8c` landed that together with the
+> qBittorrent reachability fix, in that order deliberately (see the end of this
+> section). The diagnosis below is kept because it is how the failure class was
+> found, and because the same shape recurs: read it as history, not as live state.
+>
+> The open lifecycle bug is a **different** one — PET-447, where the guard never ran
+> on plex-gpu at all, because the host key that selected it named a host PET-354 had
+> deleted.
 
 `roles/media-lifecycle` is what stops `stack-down.yml` killing a live Plex stream
-or an active torrent. **Neither guard can distinguish "nothing is in use" from "I
-could not tell"** — but they fail in two different ways, and the difference is
-worth knowing before you go looking.
+or an active torrent. As found, **neither guard could distinguish "nothing is in
+use" from "I could not tell"** — and they failed in two different ways, which is
+the part worth keeping.
 
-**qBittorrent fails open, silently.** `in-use-qbittorrent-vpn.yml`:
+**qBittorrent failed open, silently.** The `in-use-qbittorrent-vpn.yml` of the day:
 
 ```yaml
 media_in_use: >-
@@ -181,10 +193,12 @@ media_in_use: >-
      if (lifecycle_qbit_active.status | default(0)) == 200 else false }}
 ```
 
-`false` is the else branch, so the `403` this call actually returns (next section)
-reads as "nothing downloading" and the stop proceeds. Confirmed live.
+`false` is the else branch, so the `403` that call actually returned (next section)
+read as "nothing downloading" and the stop proceeded. Confirmed live at the time.
+The replacement asks a narrower question — did the call return a JSON array at all?
+— and everything else resolves to `unknown`.
 
-**Plex does not fail open — it crashes.** An earlier draft of this section claimed
+**Plex did not fail open — it crashed.** An earlier draft of this section claimed
 it did, reasoning that empty content would fall through to `default('0')`. Testing
 it says otherwise. On the ansible-core in use here (2.20.4), `regex_search` with a
 capture group returns **`None`** on no match, and `None | first` raises before
@@ -195,32 +209,36 @@ The filter plugin 'ansible.builtin.first' failed: 'NoneType' object is not itera
 ```
 
 Verified against both failure shapes — empty content (unreachable) and a body with
-no `size` attribute (a 401 page). So a broken Plex guard aborts the play rather than
-quietly authorising a stop. Loud, but still not a working guard, and still no way to
-say "in use" when it cannot see. (The rewrite inherited exactly this crash until a
-bogus-port test caught it — `or ['']` between `regex_search` and `first` is the fix.)
+no `size` attribute (a 401 page). So a broken Plex guard aborted the play rather than
+quietly authorising a stop: loud, but not a working guard, and with no way to say "in
+use" when it could not see. `or ['']` between `regex_search` and `first` is the fix,
+and the rewrite inherited exactly this crash until a bogus-port test caught it.
 
-**This is live today, and it is not a regression — the qBittorrent guard has never
-worked.** `host_vars/qbittorrent-vpn.yml` sets `qbit_api: "http://localhost:8080"`,
-Ansible's `uri` module runs on the target host, and a host-origin request to that port
-is refused by qBittorrent for the reason in the next section. The guard has been
-getting `Forbidden` since the compose stack was built. **Collapsing "cannot tell"
-into "not in use" is precisely what kept that invisible** — a guard that said
-"cannot determine" out loud would have surfaced this the first time it ran.
+**The qBittorrent guard had never worked, and that was not a regression.**
+`host_vars/qbittorrent-vpn.yml` set `qbit_api: "http://localhost:8080"`, Ansible's
+`uri` module runs on the target host, and a host-origin request to that port is
+refused by qBittorrent for the reason in the next section. The guard had been getting
+`Forbidden` since the compose stack was built. **Collapsing "cannot tell" into "not
+in use" is precisely what kept that invisible** — a guard that said "cannot
+determine" out loud would have surfaced it the first time it ran.
 
-The fix is to fail **closed**: an undeterminable state should refuse the stop and
-say why, leaving `-e media_lifecycle_force=true` as the deliberate override — which
-is exactly what that override exists for.
+The fix was to fail **closed**: an undeterminable state refuses the stop and says
+why, leaving `-e media_lifecycle_force=true` as the deliberate override — which is
+exactly what that override exists for.
 
-That fix is **not in this PR**; it is in the follow-up that also repairs the
-qBittorrent reachability, and the order matters. Failing closed while qBit's guard
-still cannot see anything would block every qBittorrent stop from the moment it
-merged — so the reachability fix has to land with it, not after it.
+**It shipped with the reachability fix, in one commit, and the order was the reason.**
+Failing closed while qBit's guard still could not see anything would have blocked
+every qBittorrent stop from the moment it merged. So `fdc8c8c` moved the probe to
+`docker exec {{ qbit_container }} curl` inside gluetun's netns *and* made `unknown`
+refuse, together.
 
 Same family as the seerr `creates:` incident and the `media-base` timezone
 assumption, and the general rule is the one those earned: **a check that
 cannot fail loudly is not a check.** When a guard's whole job is to withhold
 permission, "unknown" must resolve to *no*, never to *yes*.
+
+PET-447 is the sequel worth reading next to this one. Both guards now answer
+correctly, and on plex-gpu neither was being asked.
 
 ## A guard is only testable if its decision has no I/O in it (found 2026-09-16)
 

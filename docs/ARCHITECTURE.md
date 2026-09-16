@@ -51,7 +51,7 @@ flowchart TB
         end
 
         subgraph stores["ZFS pools (bind-mounted, data lives here)"]
-            MNT["media · RAIDZ1 4x SSD · 2.7T<br/>downloads · 1 SSD · 861G"]
+            MNT["media · RAIDZ1 4x 953.9G SSD<br/>downloads · 1x 894.3G SSD<br/>usage: zfs list on pve02"]
         end
 
         POOL["Proxmox resource pool<br/>(pool.tf — PET-56)"]
@@ -72,15 +72,18 @@ flowchart TB
 ## Legend / notes
 
 - **Terraform** (`environments/media`) declares each LXC via the reusable
-  `modules/proxmox-lxc`; the 7 hosts were `terraform import`ed to a **zero-drift**
+  `modules/proxmox-lxc`; the hosts were `terraform import`ed to a **zero-drift**
   plan (PET-46). State key is isolated from `petedio-iac` (`media/terraform.tfstate`).
+  The import captured seven; `media.tf` declares **six** module blocks today — lidarr
+  100 left in PET-319 and plex 103 died with pve01, and plex-gpu 236 was added.
 - **Ansible** configures the running services idempotently (PET-47, **complete**).
   Roles: `media-base`, `servarr` (one parametrised role covering
   sonarr/radarr/prowlarr — lidarr left in PET-319), `plex`, `seerr`,
   `qbittorrent-vpn`, `media-lifecycle`. Reaches the LXCs over
   `id_ed25519_ansible` (bootstrapped additively via `pct exec` on the guest's
-  node). The `plex` role has had no host since 103 died — see the disabled play
-  in `playbooks/media-roles.yml`.
+  node). The `plex` role updates **plex-gpu 236** since PET-394 — the play in
+  `playbooks/media-roles.yml` names `hosts: plex-gpu`. It was hostless between
+  103 dying and that change.
 - **Secrets:** the Proxmox token / MinIO creds / LXC ssh key are the same
   `kv/iac/*` values `petedio-iac` uses (read via the `terraform-local` AppRole).
   The media-only VPN secret (`kv/services/media/qbittorrent`) is read by the
@@ -89,9 +92,12 @@ flowchart TB
 - **Data safety:** the *arr/Plex media + downloads live on the shared host stores
   `/mnt/media` + `/mnt/downloads` (bind-mounts), so destroying/recreating a
   *container* never touches the data.
-- **Pool membership** (`pool.tf`, PET-56) puts all six LXCs in a Terraform-managed
-  Proxmox resource pool. Add-only — it was the one change in the first real apply.
-- **filebrowser (102)** is **decommissioned** — PET-82 is Done. It no longer exists
-  on the cluster and is not modelled here.
+- **Pool membership** (`pool.tf`, PET-56) puts the six declared LXCs — 101, 104, 105,
+  109, 110, 236 — in a Terraform-managed Proxmox resource pool. Add-only; it was the
+  one change in the first real apply.
+- **filebrowser (102)** is **decommissioned** — PET-82 is Done — but **VMID 102 is
+  live**. The number was reused and 102 is flaresolverr on pve03 (`.150`, DHCP,
+  deliberately unmanaged), which is what the diagram above shows. The app is gone;
+  the number is not free. Neither is modelled in Terraform here.
 - **The 21x renumber is canceled** (PET-49) — these legacy VMIDs/IPs are permanent,
   not an interim state waiting on a migration.

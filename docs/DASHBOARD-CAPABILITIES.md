@@ -229,22 +229,29 @@ case-insensitively **[src]** — so `ApplicationUpdate`, `EpisodeSearch`,
 
 Radarr is the same shape with `movieIds` / `includeUnknownMovieItems` **[src]**.
 
-### Lidarr (100 /.14 · `:8686`) and Prowlarr (109 /.20 · `:9696`) — both `/api/v1`
+### Prowlarr (109 /.20 · `:9696`) — `/api/v1`
 
-Same auth and the same `system/status`, `health`, `update`, `command` contract
-**[live]**; the media-shaped endpoints differ (albums vs episodes).
+> **Lidarr shared this section, and Lidarr is gone.** LXC 100 /.14 was removed in
+> PET-319, which is why the re-probe table above counts 37 probes and not 41. The
+> `/api/v1` contract below is Prowlarr's alone. Sonarr and Radarr are `/api/v3`.
 
-**`queue` is NOT part of that shared contract.** Lidarr has one; Prowlarr's
-`/api/v1/queue` returns **HTTP 404** **[live]** — it manages indexers, it does not
-run downloads, so it has no queue to expose. An earlier draft of this section listed
-`queue` as common to both. Anything iterating "the four *arrs" for queue rows has to
-skip Prowlarr rather than treat the 404 as an outage.
+Same auth as the v3 apps and the same `system/status`, `health`, `update`, `command`
+contract **[live]**; the media-shaped endpoints differ.
+
+**`queue` is NOT part of that shared contract.** Prowlarr's `/api/v1/queue` returns
+**HTTP 404** **[live]** — it manages indexers, it does not run downloads, so it has no
+queue to expose. Anything iterating "the *arrs" for queue rows has to skip Prowlarr
+rather than treat the 404 as an outage. Iterate the group, not a remembered count:
+`servarr` is three hosts.
 
 Prowlarr's value to a dashboard is `GET /indexer` **[live]** — when nothing is being
 found at all, a dead indexer is usually why, and that is a fourth tab to go
 check.
 
-### Plex (103 · `:32400` · `X-Plex-Token` header)
+### Plex (plex-gpu 236 /.236 on pve02 · `:32400` · `X-Plex-Token` header)
+
+This header read `103` until the re-probe above. That host died with pve01 on
+2026-09-03; plex-gpu 236 is the only Plex, and every row below was re-read against it.
 
 Token from `Preferences.xml` **[live]**. XML by default — send
 `Accept: application/json`.
@@ -473,20 +480,20 @@ blocked on getting the Proton key into the media Vault scope.)
 
 ## 3. The update button — build it on Ansible, not on the APIs
 
-This is the one place where the obvious design is wrong. Only **four of the seven**
+This is the one place where the obvious design is wrong. Only **three of the six**
 services can update themselves over an API:
 
 | Service | Self-update over API? | The actual supported path |
 |---|---|---|
-| sonarr · radarr · lidarr · prowlarr | **Yes** — `POST /command {ApplicationUpdate}` | Already how `roles/servarr` does it **[live]** |
+| sonarr · radarr · prowlarr | **Yes** — `POST /command {ApplicationUpdate}` | Already how `roles/servarr` does it **[live]** |
 | **plex** | **No** | apt from `repo.plex.tv`. Plex's `/updater/*` endpoints exist, but repository updating is the supported mechanism for Linux packages — the Linux ecosystem is full of third-party update scripts precisely because PMS does not self-update from a distro package. The probe records what `/updater/status` actually returns on our box. |
 | seerr | **No** | No release assets published at all — source tag + `pnpm build` **[live]** |
 | qbittorrent-vpn | **No** | `docker compose pull` against digest comparison **[live]** |
 
-So an API-driven "update everything" button would cover Sonarr/Radarr/Lidarr/Prowlarr
-and silently do nothing for Plex — which is the one the question actually named.
+So an API-driven "update everything" button would cover Sonarr/Radarr/Prowlarr and
+silently do nothing for Plex — which is the one the question actually named.
 
-More importantly, `playbooks/update-media.yml` already does all seven *and* carries
+More importantly, `playbooks/update-media.yml` already does all six *and* carries
 guards that took real work to get right and that a dashboard would be reimplementing
 from zero:
 
@@ -512,12 +519,12 @@ Today every credential is read *on the host it belongs to* and used over loopbac
 `roles/servarr` says so explicitly: *"Always talk to the app over loopback — the API
 key never leaves the container."*
 
-A dashboard cannot preserve that. It has to hold **six credentials centrally** — four
-*arr API keys, the seerr key, and the Plex token — and each *arr key is equivalent to
-full control of that app. That makes the dashboard the most privilege-concentrated
-thing in the media stack.
+A dashboard cannot preserve that. It has to hold **five credentials centrally** —
+three *arr API keys, the seerr key, and the Plex token — and each *arr key is
+equivalent to full control of that app. That makes the dashboard the most
+privilege-concentrated thing in the media stack.
 
-**Six, not seven: there is no qBittorrent credential to hold.** Earlier drafts counted
+**Five, not six: there is no qBittorrent credential to hold.** Earlier drafts counted
 a qBit password; it does not exist (no `WebUI\Password_PBKDF2` at all — the subnet
 allowlist is the auth). A dashboard reaching qBittorrent does so from an allowlisted
 source or not at all, which is a real constraint on *where it runs* rather than one

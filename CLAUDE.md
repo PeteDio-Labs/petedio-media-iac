@@ -34,10 +34,16 @@ Start here for media work:
 ⚠ **A large amount of live media behaviour is configured through app APIs and
 exists nowhere in git** — Prowlarr's indexer set (enable/disable, priority,
 minimum seeders), qBittorrent's share limits and `preallocate_all`, Sonarr's
-quality profiles, the VPN exit country. Ansible does **not** manage any of it.
+quality profiles. Ansible does **not** manage any of it.
 This is a real drift class: a rebuild silently restores old behaviour, and the
 only record that a setting was ever chosen deliberately is the vault note. When
 you change one of these live, write it down there — nothing else will.
+
+**The VPN exit country left that list in PET-295.** It lived only in the host's
+uncommitted `.env`, so the real exit country existed nowhere in git; it is now
+`proton_server_countries` in `roles/qbittorrent-vpn/defaults/main.yml`, and
+`docker-compose.yml.j2` renders `SERVER_COUNTRIES` from it. Change it there, not
+on the host.
 
 Vault conventions (its own `CLAUDE.md` governs): globally-unique note names,
 filename-only `[[wikilinks]]`, frontmatter with a `verified:` date, and
@@ -78,9 +84,12 @@ new work into PR descriptions no longer applies — file it in Plane instead.
    **Never `apply` against drift** — it could mutate/recreate a data-heavy container.
    This matters more now: `MEDIA_APPLY_ENABLED=true` since 2026-08-11, so a merge
    really does apply.
-2. **VMIDs are the live legacy numbers** (100/101/103/104/105/109/110) and they are
+2. **VMIDs are the live legacy numbers** (101/104/105/109/110) and they are
    **permanent**. PET-49 is Canceled, not deferred — there is no future renumber, so
    don't design anything (new hosts included) around a 21x scheme arriving later.
+   100 and 103 were in this list and are **gone** — see the Hosts section below.
+   Permanent means "nothing will renumber a live guest", not "every number here is
+   still in use".
 3. **Ground-truth before you trust docs.** The old Linear inventory doc was wrong
    about media VMID→role→IP (corrected 2026-06-04); it is now stranded in the
    retired workspace and drifting further, so prefer `vault/Hosts/hosts-inventory.md`.
@@ -165,8 +174,9 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
 sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; updates plex-gpu
 236 since PET-394) · `seerr` (build from source) ·
-`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, images pulled
-through the `docker.pdlab.dev` Zot cache — **down since 2026-09-03**, PET-389) ·
+`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**; `qbit_registry`
+still points every image at the `docker.pdlab.dev` Zot cache, which has been
+**down since 2026-09-03** — so the pull path is declared, not working, PET-389) ·
 `media-lifecycle` (in-use guards + ordered stop/start).
 
 Playbooks: `check-updates.yml` (read-only report) · `update-media.yml` ·
@@ -178,14 +188,19 @@ dry-run and an apply exercise the same code.
 
 - Every role that asserts a baseline must **measure** it first — the `media-base`
   timezone incident silently converted four hosts.
-- The `media-lifecycle` in-use guards cannot express **"I could not tell"**. qBit's
-  fails open (a `403` reads as "nothing downloading"); Plex's crashes on the same
-  class of failure. Open bug, not a design.
+- The `media-lifecycle` in-use guards **can** express "I could not tell", and a stop
+  refuses on it. `fdc8c8c` gave both guards three states — `in-use`, `idle`,
+  `unknown` — so qBit's `403` and Plex's no-match both land on `unknown`, and
+  `tasks/main.yml` fails the stop rather than proceeding. `-e
+  media_lifecycle_force=true` is the override. The **open** lifecycle bug is a
+  different one: PET-447, where the guard never ran on plex-gpu at all because the
+  host key it was selected by named a deleted host.
 - **qBittorrent's API is unreachable from LXC 110's own host.** It has no WebUI
   password (the `.env` one is a phantom that only earns hour-long IP bans), and its
   subnet allowlist can't match a host-origin request because Docker SNATs it to the
-  bridge gateway. Use `docker exec qbittorrent curl …`. This is why the qBittorrent
-  in-use guard has never worked.
+  bridge gateway. Use `docker exec qbittorrent curl …` — which is what the in-use
+  guard does since `fdc8c8c`, and why it reads a real torrent list rather than a
+  `403`.
 
 ## Runtime / tooling
 
