@@ -104,22 +104,24 @@ databases get corrupted. Run-state is deliberately **not** in Terraform — the
 module keeps `started` in `lifecycle.ignore_changes`, because CI applies on merge
 and an unrelated merge should never boot the stack back up.
 
-> ⚠ **The cache is down (2026-09-03–), and it will not come back as it was.** registry-106
+> ⚠ **The cache is gone (2026-09-03–), and it does not come back as it was.** registry-106
 > died with pve01, `pct restore` fails on its idmap, and its blob store went with pve02's
-> rebuild (PET-389). `qbit_registry` still names `docker.pdlab.dev`, so `update-media.yml`
-> and `stack-up.yml` cannot pull qbittorrent-vpn's images until that is repointed at upstream
-> (the Hub cap applies again) or the registry is rebuilt.
+> rebuild (PET-389). PET-448 repointed qbittorrent-vpn's three images at registries that
+> answer, so `update-media.yml` and `stack-up.yml` pull again — directly, which puts the Hub
+> anonymous cap back on the two `docker.io` images.
 
-**Registry rate limits — fixed 2026-08-11.** Two of the three qbittorrent-vpn
-images come from `docker.io`, which caps anonymous pulls (100/6h per IP); `lscr.io`
-throttles bursts too. All three resolved through the homelab Zot pull-through
-cache (`docker.pdlab.dev`, see `qbit_registry` in the role defaults), which removed
-the cap from the normal path. The cache is on-demand, so the first pull of a new tag
-still fetches upstream and can still be throttled — the handling for that stays:
-the digest check reports an unresolvable image as `NOT CHECKED` rather than
-pretending it is current, and pulls are done **per service**, so one
-throttled-but-current image can't block updating a different one that is genuinely
-stale.
+**Registry rate limits.** Two of the three qbittorrent-vpn images come from
+`docker.io`, which caps anonymous pulls at 100 per 6h per IP. A homelab Zot
+pull-through cache removed that cap from the normal path between 2026-08-11 and
+2026-09-03, and it is gone (PET-389), so the cap applies again. Two mechanisms
+handle it, and neither needs a cache:
+
+- The digest check reports an unresolvable image as `NOT CHECKED` rather than
+  pretending it is current, and the role **fails** when it could not read one
+  remote digest. A run that checked nothing no longer reports a clean stack
+  (PET-448).
+- Pulls run **per service**, so one throttled-but-current image cannot block
+  updating a different one that is genuinely stale.
 
 **Two things the qbittorrent-vpn role gets right that are easy to get wrong:**
 

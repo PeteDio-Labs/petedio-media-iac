@@ -118,17 +118,11 @@ Note the absence of `qbit_password`. That is deliberate — see § `QBIT_WEBUI_P
 
 ## Consume
 
-The `qbittorrent-vpn` role **exists** (it renders `docker-compose.yml.j2` and points
-every image at `docker.pdlab.dev` through `qbit_registry`), but `.env` is still
+The `qbittorrent-vpn` role **exists** (it renders `docker-compose.yml.j2` and
+addresses each image at a registry that answers, PET-448), but `.env` is still
 unmanaged: it is the one file the role does not render, precisely because these
 values are not in Vault yet. Seeding closes that gap and lets the role template
 `.env` like everything else.
-
-⚠ **That registry has been down since 2026-09-03** — registry-106 died with pve01 and
-its blob store is gone (PET-389). So the pull path is declared, not working: a
-converge that has to pull an image fails until `qbit_registry` is repointed upstream
-or the registry is rebuilt. Seeding the secret does not depend on it, and a converge
-that pulls nothing is unaffected.
 
 ```yaml
 - name: Read qBittorrent/Gluetun secrets from Vault

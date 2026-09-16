@@ -1,0 +1,93 @@
+# Regression test for roles/qbittorrent-vpn/tasks/digest-verdict.yml, the update
+# verdict (PET-448).
+#
+#   cd ansible
+#   ansible-playbook tests/qbit-digest-verdict.yml
+#
+# Runs on localhost and touches nothing. It feeds the verdict recorded rows from
+# image-digests.sh and asserts BOTH the report it produces and whether the play
+# was refused, which is the part PET-448 added.
+#
+# Expect one 'fatal' line and rescued=1 in the recap: that is the verdict
+# refusing an all-unknown run, caught so the refusal can be asserted rather than
+# end the run.
+#
+# WHAT IT EXISTS TO CATCH. `update_available` was driven by the outdated list
+# being non-empty and by nothing else, so a run that resolved NO remote digest
+# reported `update_available: false` — indistinguishable from a clean stack. The
+# dead docker.pdlab.dev prefix held that state for thirteen days and the report
+# said nothing was outdated the whole time. Every case below reports what the
+# pre-PET-448 code would have concluded from the same rows, so the fail-quiet is
+# shown, not argued.
+- name: qBittorrent digest verdict — recorded rows
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    digest_cases:
+      # The defect, in one case. Three images, not one answer, and the old code
+      # called that "nothing outdated".
+      - name: no remote digest resolved at all
+        rows:
+          - "gluetun qmcgaw/gluetun:latest sha256:aaa unknown"
+          - "qbittorrent lscr.io/linuxserver/qbittorrent:latest sha256:bbb unknown"
+          - "portsync alpine:3.20 sha256:ccc unknown"
+        want_failed: true
+
+      # One 429 is tolerated: two images were really checked, so the run still
+      # means something. The unreadable one is named, not silently dropped.
+      - name: one image unreadable, the rest current
+        rows:
+          - "gluetun qmcgaw/gluetun:latest sha256:aaa unknown"
+          - "qbittorrent lscr.io/linuxserver/qbittorrent:latest sha256:bbb sha256:bbb"
+          - "portsync alpine:3.20 sha256:ccc sha256:ccc"
+        want_failed: false
+        want_update: false
+        want_note_has: "NOT CHECKED"
+
+      - name: one image genuinely behind
+        rows:
+          - "gluetun qmcgaw/gluetun:latest sha256:aaa sha256:zzz"
+          - "qbittorrent lscr.io/linuxserver/qbittorrent:latest sha256:bbb sha256:bbb"
+          - "portsync alpine:3.20 sha256:ccc sha256:ccc"
+        want_failed: false
+        want_update: true
+        want_note_has: "behind: qmcgaw/gluetun:latest"
+
+      - name: everything current
+        rows:
+          - "gluetun qmcgaw/gluetun:latest sha256:aaa sha256:aaa"
+          - "qbittorrent lscr.io/linuxserver/qbittorrent:latest sha256:bbb sha256:bbb"
+          - "portsync alpine:3.20 sha256:ccc sha256:ccc"
+        want_failed: false
+        want_update: false
+        want_note_has: ""
+
+      # An image that was never pulled has no local digest. That is not "behind",
+      # and it is not unreadable either — the remote side answered.
+      - name: an image not pulled locally
+        rows:
+          - "gluetun qmcgaw/gluetun:latest none sha256:zzz"
+          - "qbittorrent lscr.io/linuxserver/qbittorrent:latest sha256:bbb sha256:bbb"
+          - "portsync alpine:3.20 sha256:ccc sha256:ccc"
+        want_failed: false
+        want_update: false
+        want_note_has: ""
+
+      # The script produced nothing at all — `docker compose config` failed, or
+      # the directory is not there. Do not turn that into a refusal here: the
+      # script task itself fails first, and a zero-row guard that fires would
+      # make the message misleading.
+      - name: the script produced no rows
+        rows: []
+        want_failed: false
+        want_update: false
+        want_note_has: ""
+  tasks:
+    - name: Judge each recorded set of rows
+      ansible.builtin.include_tasks: cases/qbit-digest-verdict-case.yml
+      loop: "{{ digest_cases }}"
+      loop_control:
+        loop_var: digest_case
+        label: "{{ digest_case.name }}"

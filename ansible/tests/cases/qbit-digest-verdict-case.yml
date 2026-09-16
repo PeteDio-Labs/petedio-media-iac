@@ -1,0 +1,69 @@
+# One case for tests/qbit-digest-verdict.yml. Included once per recorded set of
+# rows.
+---
+# The verdict accumulates with `default([]) + [...]`, so a list left over from
+# the previous case would leak into this one and make a passing case pass for
+# the wrong reason. Clear all three.
+- name: "{{ digest_case.name }} — load the recorded rows"
+  ansible.builtin.set_fact:
+    qbit_digests:
+      stdout_lines: "{{ digest_case.rows }}"
+    qbit_outdated_images: []
+    qbit_outdated_services: []
+    qbit_unchecked_images: []
+    media_update_report: {}
+    verdict_failed: false
+
+# The refusal is a failed play, not a returned value, so catching it is the only
+# way to assert on it. rescue: fires for a failure raised inside a dynamic
+# include, which is what makes the refusing path testable at all.
+- name: "{{ digest_case.name }} — run the verdict"
+  block:
+    - name: "{{ digest_case.name }} — judge"
+      ansible.builtin.include_tasks: ../../roles/qbittorrent-vpn/tasks/digest-verdict.yml
+  rescue:
+    - name: "{{ digest_case.name }} — the verdict refused"
+      ansible.builtin.set_fact:
+        verdict_failed: true
+
+# What the code before PET-448 concluded from these same rows. `update_available`
+# was the outdated list being non-empty and nothing else, so an all-unknown set
+# scored "nothing outdated". This line shows that rather than asserting it.
+- name: "{{ digest_case.name }} — what the verdict before PET-448 would have said"
+  ansible.builtin.set_fact:
+    verdict_old: >-
+      {{ 'an update is available'
+         if (qbit_outdated_images | default([]) | length) > 0
+         else 'nothing outdated' }}
+
+- name: "{{ digest_case.name }} — assert the refusal"
+  ansible.builtin.assert:
+    that:
+      - (verdict_failed | bool) == (digest_case.want_failed | bool)
+    fail_msg: >-
+      {{ digest_case.name }}: refused={{ verdict_failed }};
+      want refused={{ digest_case.want_failed }}.
+    success_msg: >-
+      {{ digest_case.name }}:
+      {{ digest_case.rows | length }} rows,
+      {{ qbit_unchecked_images | default([]) | length }} unreadable ->
+      {{ 'REFUSED' if verdict_failed | bool else 'reported' }}.
+      Before PET-448: {{ verdict_old }}.
+
+# A refused run sets no report, so there is nothing further to assert on it.
+- name: "{{ digest_case.name }} — assert the report"
+  when: not (digest_case.want_failed | bool)
+  ansible.builtin.assert:
+    that:
+      - (media_update_report.update_available | bool) == (digest_case.want_update | bool)
+      - digest_case.want_note_has | length == 0
+        or digest_case.want_note_has in media_update_report.note
+    fail_msg: >-
+      {{ digest_case.name }}: update_available={{ media_update_report.update_available }},
+      note={{ media_update_report.note | to_json }};
+      want update_available={{ digest_case.want_update }},
+      note containing {{ digest_case.want_note_has | to_json }}.
+    success_msg: >-
+      {{ digest_case.name }}:
+      update_available={{ media_update_report.update_available }},
+      note={{ media_update_report.note | to_json }}.

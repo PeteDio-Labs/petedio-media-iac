@@ -130,13 +130,26 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   this breaks *both* the digest check and the pull with HTTP 429. Treat an
   unresolvable remote digest as **unknown, never as up-to-date**. compose aborts
   the pull before recreating anything, so the failure is safe — but it must be
-  surfaced. **Fixed 2026-08-11, undone 2026-09-03:** all three images resolved through
-  the homelab Zot pull-through cache (`docker.pdlab.dev`, `qbit_registry` in the role
-  defaults) until registry-106 died with pve01; it is down with no blob store left
-  (PET-389), so pulls through it fail until it is rebuilt or `qbit_registry` is repointed
-  at upstream. The original fix covered all three images, the `lscr.io` one included,
-  which is not Hub-capped but benefits from the same locality. The cache is
-  on-demand — the first pull of a tag still fetches from upstream.
+  surfaced. A homelab Zot pull-through cache held all three images from 2026-08-11
+  until registry-106 died with pve01 on 2026-09-03; its blob store is gone (PET-389).
+  The `qbit_registry` prefix stayed in the role defaults for another thirteen days,
+  naming a registry that answered nothing. PET-448 repointed each image at its own
+  registry, and there is no shared prefix any more.
+- **A check that cannot read must not report "nothing outdated".** Through those
+  thirteen days the qbittorrent-vpn digest step marked every image `unknown` and
+  still set `update_available: false`, because the only thing that set it true was
+  the outdated list being non-empty. Nothing separated "checked, all current" from
+  "checked nothing". The role now fails when NO row resolved, while still tolerating
+  a 429 on a single image (PET-448).
+- **Read a registry's auth realm from the manifest request, not from `/v2/`.**
+  `lscr.io` is a redirector in front of ghcr.io: `/v2/` answers **405 with no
+  `www-authenticate` header**, while the manifest request answers 401 and names
+  `realm="https://ghcr.io/token"`. `image-digests.sh` asked `/v2/`, so it took no
+  token for qBittorrent, sent the manifest request unauthenticated, got 401 back and
+  printed `unknown` — on every run since the script was written, cache or no cache.
+  It was read as lscr.io's burst limiter for months. It was not (PET-448). Measured:
+  with the realm taken from the manifest's own 401, the same function returns
+  `sha256:2be038f3421f…` for `lscr.io/linuxserver/qbittorrent:latest`.
 - **Plex has no in-app updater on Linux server builds** — apt is the mechanism.
   The host also carried a stale second Plex repo (`plex.list` →
   `downloads.plex.tv`, pinned to the 1.42.2 line) alongside the current
