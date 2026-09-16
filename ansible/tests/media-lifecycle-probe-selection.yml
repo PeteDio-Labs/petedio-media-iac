@@ -1,0 +1,86 @@
+# Regression test for how media-lifecycle picks a host's in-use probe (PET-447, PET-456).
+#
+#   cd ansible
+#   ansible-playbook tests/media-lifecycle-probe-selection.yml
+#
+# Reads roles/media-lifecycle/tasks/main.yml off disk and asserts the shape of one
+# task. It contacts nothing and needs no inventory.
+#
+# WHAT IT EXISTS TO CATCH, and why the other tests do not. The probe used to be
+# selected by `when: inventory_hostname in ['plex', 'qbittorrent-vpn']`. PET-354
+# had already deleted `plex`, and the only Plex is `plex-gpu`, so the guard never
+# ran and stack-down.yml stopped a Plex without asking whether anyone was
+# watching. tests/media-lifecycle-units.yml asserts that each host DECLARES a
+# probe and that the file exists — both of which stay true if someone puts the
+# hostname list back, because the list is in the role and the declaration is in
+# host_vars. Nothing failed on the list itself. This does.
+- name: media-lifecycle probe selection — keyed on the host, not on a list in the role
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    role_tasks: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~ '/../roles/media-lifecycle/tasks/main.yml')
+         | from_yaml }}
+    # The probe task sits inside the "check whether it is in use" block, so flatten
+    # one level of block before looking for it.
+    flat_tasks: >-
+      {{ role_tasks | map(attribute='block', default=[]) | flatten | list + role_tasks }}
+  tasks:
+    # ⚠ selectattr cannot match the literal key `ansible.builtin.include_tasks`:
+    # Jinja reads the dots as attribute traversal, so the filter looks for
+    # .ansible.builtin.include_tasks and quietly matches nothing. An empty result
+    # then reads as "the probe is gone" when the probe is right there. dict2items
+    # turns the key into a plain `key` attribute, which selectattr can compare.
+    - name: Find the task that includes the probe
+      ansible.builtin.set_fact:
+        probe_task: "{{ item }}"
+      loop: "{{ flat_tasks }}"
+      loop_control:
+        label: "{{ item.name | default('(unnamed)') }}"
+      when: >-
+        (item | dict2items
+         | selectattr('key', 'equalto', 'ansible.builtin.include_tasks')
+         | map(attribute='value') | select('search', 'in-use-') | list | length) > 0
+
+    - name: Read the probe task's include and condition
+      ansible.builtin.set_fact:
+        probe_include: >-
+          {{ (probe_task | default({}) | dict2items
+              | selectattr('key', 'equalto', 'ansible.builtin.include_tasks')
+              | map(attribute='value') | first | default('')) }}
+        probe_when: "{{ probe_task.when | default('') | string }}"
+
+    - name: The role still includes an in-use probe
+      ansible.builtin.assert:
+        that: probe_include != ''
+        fail_msg: >-
+          No task in roles/media-lifecycle/tasks/main.yml includes an in-use-*.yml
+          probe. Deleting it removes the guard entirely: stack-down.yml would stop
+          every host without asking whether anything is in use.
+        success_msg: "the role includes {{ probe_include }}"
+
+    # The name is the host's to state, in host_vars, next to its unit and its
+    # port. A list here is a second place to remember, and the one that was
+    # forgotten.
+    - name: The probe file is named by the host, not by the role
+      ansible.builtin.assert:
+        that: probe_include is search('media_in_use_probe')
+        fail_msg: >-
+          The probe include resolves "{{ probe_include }}", which does not read
+          media_in_use_probe. Naming the file from inventory_hostname is what made
+          plex-gpu look for in-use-plex-gpu.yml and find nothing (PET-447).
+        success_msg: "the probe include reads media_in_use_probe"
+
+    - name: The probe condition is not a list of hostnames
+      ansible.builtin.assert:
+        that:
+          - not (probe_when is search('inventory_hostname'))
+          - probe_when is search('media_in_use_probe')
+        fail_msg: >-
+          The probe runs `when: {{ probe_when }}`. A hostname list in the role is
+          how the only Plex lost its guard: PET-354 deleted `plex` from the
+          inventory, the list kept the dead name, and plex-gpu was never in it.
+          Gate on the host's own media_in_use_probe instead.
+        success_msg: "the probe runs when: {{ probe_when }}"

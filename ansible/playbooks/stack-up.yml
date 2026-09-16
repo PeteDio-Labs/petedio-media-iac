@@ -80,8 +80,9 @@
           VPN OK — host {{ stack_host_ip.stdout | trim }},
           tunnel {{ stack_vpn_ip.stdout | trim }}.
 
+# media:gpu-media — see the note on the matching play in stack-down.yml (PET-447).
 - name: Media stack up — report
-  hosts: media
+  hosts: media:gpu-media
   gather_facts: false
   tasks:
     - name: Summarise

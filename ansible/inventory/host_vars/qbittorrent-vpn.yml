@@ -10,6 +10,12 @@ media_timezone: "Etc/UTC"
 media_service_kind: compose
 media_health_port: 8080
 
+# Which in-use probe media-lifecycle runs before stopping this host. See the
+# note in host_vars/plex-gpu.yml: the role used to select the probe from a list
+# of hostnames it carried itself, and a host that was renamed lost its guard
+# silently (PET-447).
+media_in_use_probe: qbittorrent-vpn
+
 # Host facts, declared here rather than only in roles/qbittorrent-vpn/defaults
 # because the media-lifecycle role needs the same values for its "anything
 # downloading?" probe. host_vars beats role defaults — single source for both.

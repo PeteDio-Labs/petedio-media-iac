@@ -53,8 +53,12 @@
   roles:
     - media-lifecycle
 
+# media:gpu-media, not media: plex-gpu (236) sits in gpu-media, so `hosts: media`
+# alone left the whole Plex tier out of the report — and out of `--limit plex-gpu`
+# entirely, which ended the run with no report at all. playbooks/media-roles.yml
+# already reads both groups for the same reason (PET-447).
 - name: Media stack down — report
-  hosts: media
+  hosts: media:gpu-media
   gather_facts: false
   tasks:
     - name: Summarise

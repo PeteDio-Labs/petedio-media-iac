@@ -10,9 +10,11 @@
     - media_lifecycle_state == 'stopped'
     - not (media_lifecycle_force | bool)
   block:
+    # Keyed on the host's own `media_in_use_probe`, never on a list of hostnames
+    # kept here — see defaults/main.yml for what that list cost (PET-447).
     - name: "{{ inventory_hostname }} — probe in-use signal"
-      ansible.builtin.include_tasks: "in-use-{{ inventory_hostname }}.yml"
-      when: inventory_hostname in ['plex', 'qbittorrent-vpn']
+      ansible.builtin.include_tasks: "in-use-{{ media_in_use_probe }}.yml"
+      when: (media_in_use_probe | default('') | trim) != ''
 
 # --------------------------------------------------------- the guard verdict --
 # 'unknown' means the probe could not measure the host — not that the host is

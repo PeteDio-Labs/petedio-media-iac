@@ -1,0 +1,33 @@
+# plex-gpu 236/.236 on pve02 — the only Plex since 103 died with pve01 on
+# 2026-09-03.
+#
+# ⚠ WHY THIS FILE HAD TO EXIST. Without it `media_service_unit` kept its role
+# default, the inventory hostname, so stack-down.yml tried to stop a unit called
+# `plex-gpu`. 236 publishes `plexmediaserver.service` and nothing else, so the
+# stop failed with "Could not find the requested service plex-gpu: host" while
+# the report play still printed "Media stack stopped" (PET-447). The values below
+# were carried over from host_vars/plex.yml, which described 103 and matched no
+# host in the inventory; that file is deleted.
+#
+# 236 sits in `gpu-media`, not `media`, so media-base never converged it and the
+# baseline vars that file also carried (media_timezone,
+# media_base_stale_apt_sources) applied to nothing. They are not carried over.
+---
+# Lifecycle (stack-up / stack-down / stack-power)
+# The unit is plexmediaserver, not the inventory hostname.
+media_service_unit: plexmediaserver
+media_health_port: 32400
+
+# Which in-use probe media-lifecycle runs before stopping this host. The role
+# includes tasks/in-use-{{ media_in_use_probe }}.yml when this is set, so a host
+# declares its own guard here instead of the role carrying a list of hostnames.
+# That list is what broke: it named `plex`, a host that stopped existing in
+# PET-354, so the only Plex was stopped with no check at all.
+media_in_use_probe: plex
+
+# Host facts, declared here rather than only in roles/plex/defaults because the
+# media-lifecycle role needs the same values for its "is anyone watching?" probe.
+# host_vars beats role defaults, so this stays the single source for both.
+plex_port: 32400
+plex_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml

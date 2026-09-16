@@ -1,0 +1,196 @@
+# Regression test for the media-lifecycle host mapping (PET-447).
+#
+#   cd ansible
+#   ansible-playbook -i inventory/hosts.yml tests/media-lifecycle-units.yml
+#
+# Reads the inventory and two files on disk. Every task runs on the controller
+# with `connection: local`, so no media host is contacted and no secret is
+# needed — the GitHub-hosted runner can run it.
+#
+# WHAT IT EXISTS TO CATCH. stack-down.yml named a host, `plex`, that PET-354 had
+# deleted from the inventory. Ansible skips an unmatched host pattern with a
+# warning and reports success, and media-lifecycle picked its in-use probe from a
+# hostname list carrying the same dead name. So the only Plex was stopped with no
+# guard, against a unit name derived from the inventory hostname that 236 does
+# not publish. And stack-power.yml powered the container off regardless of what
+# that guard concluded. Nothing in the repo could fail on any of it. These
+# assertions can.
+---
+- name: Lifecycle units — the hosts stack-down names resolve to real services
+  hosts: media:gpu-media
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    # host_vars beats a role default, so `host_var | default(role_default)` is the
+    # resolution order the role itself gets. lifecycle_defaults is loaded by the
+    # first task — see the note there for why a lookup cannot do this job.
+    lifecycle_plays: >-
+      {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/stack-down.yml') | from_yaml)
+         | selectattr('roles', 'defined') | list }}
+    stack_down_targets: >-
+      {{ lifecycle_plays | map(attribute='hosts') | join(',') | split(',') | map('trim') | list }}
+    resolved_unit: "{{ media_service_unit | default(lifecycle_defaults.media_service_unit) }}"
+    resolved_kind: "{{ media_service_kind | default(lifecycle_defaults.media_service_kind) }}"
+    # The inner default('') is what makes the two probe assertions below report a
+    # missing probe as a FAILED ASSERTION rather than an undefined-variable error.
+    # A tree where the role carries no media_in_use_probe at all is the exact tree
+    # this test was written against, and an error there says "the test is broken"
+    # when the answer is "the guard is".
+    resolved_probe: >-
+      {{ media_in_use_probe | default(lifecycle_defaults.media_in_use_probe | default('')) }}
+
+    # The systemd units these hosts actually publish, read from the live hosts on
+    # 2026-09-15 with `systemctl list-unit-files`. plex-gpu publishes
+    # plexmediaserver and nothing called plex-gpu; the other four match their
+    # inventory hostname, which is why the role default is right for them and
+    # wrong for 236.
+    known_units: [plexmediaserver, sonarr, radarr, prowlarr, seerr]
+  tasks:
+    # ⚠ include_vars, NOT lookup('file') | from_yaml. A lookup returns its result
+    # marked unsafe, so Ansible refuses to template it again and the default comes
+    # back as the ten literal characters `{{ inventory_hostname }}`. Every systemd
+    # host then failed this test's unit assertion for a reason that was the
+    # test's, not the repo's. include_vars is an ordinary task and its values
+    # template in the host's own context, so sonarr resolves to `sonarr`.
+    - name: Load the role's defaults, without running the role
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/media-lifecycle/defaults/main.yml"
+        name: lifecycle_defaults
+
+    # 1. The pattern names a host that exists. A deleted or renamed host lands
+    #    here rather than in a silent skip at run time.
+    - name: Every host stack-down names is in the inventory
+      run_once: true
+      ansible.builtin.assert:
+        that: stack_down_targets | difference(groups['all']) | length == 0
+        fail_msg: >-
+          stack-down.yml targets {{ stack_down_targets | difference(groups['all']) }},
+          which match no host in the inventory. Ansible skips an unmatched pattern
+          with a warning and still reports the stack stopped.
+        success_msg: "stack-down targets {{ stack_down_targets | join(', ') }}, all in the inventory"
+
+    # 2. Every managed media host is actually stopped by stack-down.
+    - name: A stack-down play names this host
+      ansible.builtin.assert:
+        that: inventory_hostname in stack_down_targets
+        fail_msg: >-
+          {{ inventory_hostname }} is in media:gpu-media but no stack-down play
+          names it, so stack-down.yml leaves it running.
+        success_msg: "{{ inventory_hostname }} is named by a stack-down play"
+
+    # 3. The unit the stop task would name is one the host publishes. THIS is the
+    #    assertion that fails on the PET-447 bug: without host_vars/plex-gpu.yml
+    #    the default resolves to `plex-gpu`, which is not in known_units.
+    - name: A systemd host resolves a unit it publishes
+      ansible.builtin.assert:
+        that: resolved_unit in known_units
+        fail_msg: >-
+          {{ inventory_hostname }} resolves media_service_unit to
+          "{{ resolved_unit }}", which no host publishes. systemd_service calls
+          fail_if_missing, so the stop fails with "Could not find the requested
+          service {{ resolved_unit }}: host" while the report play still says the
+          stack stopped.
+        success_msg: "{{ inventory_hostname }} stops {{ resolved_unit }}"
+      when: resolved_kind == 'systemd'
+
+    - name: A compose host declares a project directory
+      ansible.builtin.assert:
+        that: qbit_dir is defined and (qbit_dir | trim) != ''
+        fail_msg: "{{ inventory_hostname }} is media_service_kind=compose but declares no qbit_dir"
+        success_msg: "{{ inventory_hostname }} stops the compose project at {{ qbit_dir }}"
+      when: resolved_kind == 'compose'
+
+    # 4. A declared probe resolves to a task file. include_tasks on a missing
+    #    file is a run-time error inside a stop that is already under way.
+    - name: A declared in-use probe has a task file
+      ansible.builtin.assert:
+        that: >-
+          (playbook_dir ~ '/../roles/media-lifecycle/tasks/in-use-'
+           ~ resolved_probe ~ '.yml') is file
+        fail_msg: >-
+          {{ inventory_hostname }} declares media_in_use_probe={{ resolved_probe }}
+          but roles/media-lifecycle/tasks/in-use-{{ resolved_probe }}.yml does not exist.
+        success_msg: "{{ inventory_hostname }} guards with in-use-{{ resolved_probe }}.yml"
+      when: (resolved_probe | trim) != ''
+
+    # The named regression, asserted directly rather than left to the rule above:
+    # plex-gpu must run a probe. Losing it is what let a live transcode be killed.
+    - name: The only Plex runs an in-use probe before it is stopped
+      ansible.builtin.assert:
+        that: (resolved_probe | trim) != ''
+        fail_msg: >-
+          plex-gpu declares no media_in_use_probe, so stack-down would stop the
+          only Plex without asking whether anyone is watching.
+        success_msg: "plex-gpu guards with in-use-{{ resolved_probe }}.yml"
+      when: inventory_hostname == 'plex-gpu'
+
+# ------------------------------------------------------------------------------
+# stack-power.yml holds the only hand-written VMID map in the repo, and the one
+# path that can power a container off. Both are checked here rather than trusted.
+- name: Lifecycle power — the power-off map matches the inventory and reads the guard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    power_plays: >-
+      {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/stack-power.yml') | from_yaml)
+         | selectattr('vars', 'defined')
+         | selectattr('vars.media_power_shutdown_order', 'defined') | list }}
+    power_map: >-
+      {{ power_plays | map(attribute='vars.media_power_shutdown_order') | first | default([]) }}
+    # default='' rather than a bare attribute lookup: on a tree whose map carries
+    # only vmid and node — the tree this test was written against — a bare lookup
+    # raises, and an error reads as "the test is broken" when the answer is "the
+    # map is". The first assertion below turns that into a sentence.
+    power_hosts: "{{ power_map | map(attribute='host', default='') | list }}"
+    power_stop_task: >-
+      {{ power_plays | map(attribute='tasks') | first | default([])
+         | selectattr('name', 'equalto', 'Stop the media containers') | first | default({}) }}
+    managed_hosts: "{{ (groups['media'] | default([])) + (groups['gpu-media'] | default([])) }}"
+  tasks:
+    # 5. Each entry says which host it is powering off. Without that key the map
+    #    cannot be checked against anything, and the power-off cannot read a guard.
+    - name: Every entry in the power-off map names its host
+      ansible.builtin.assert:
+        that: power_hosts | select('equalto', '') | length == 0
+        fail_msg: >-
+          {{ power_hosts | select('equalto', '') | length }} of
+          {{ power_map | length }} entries in media_power_shutdown_order declare no
+          `host`, so nothing ties that VMID to the in-use guard for the service
+          running on it.
+        success_msg: "all {{ power_map | length }} map entries name their host"
+
+    # 6. The map is not stale. A single-node loop naming a dead node and dead
+    #    VMIDs is what PET-354 found here, and the play's own comment says a
+    #    stale map is the failure to fail on.
+    - name: Every container the power-off names is a host in the inventory
+      ansible.builtin.assert:
+        that: power_hosts | difference(managed_hosts) | length == 0
+        fail_msg: >-
+          stack-power.yml powers off {{ power_hosts | difference(managed_hosts) }},
+          which match no host in media:gpu-media. A stale map powers off a VMID
+          nobody is guarding.
+        success_msg: "the power-off map names {{ power_hosts | join(', ') }}"
+
+    - name: Every managed host is in the power-off map
+      ansible.builtin.assert:
+        that: managed_hosts | difference(power_hosts) | length == 0
+        fail_msg: >-
+          {{ managed_hosts | difference(power_hosts) }} are in media:gpu-media but
+          absent from stack-power.yml, so `-e power=off` leaves them running and
+          reclaims none of their RAM.
+        success_msg: "all {{ managed_hosts | length }} managed hosts are in the map"
+
+    # 7. The power-off asks the guard. Without this condition the in-use check is
+    #    decorative on this path: media-lifecycle leaves an in-use host running
+    #    with a `debug`, the host succeeds, and `pct shutdown` ran anyway.
+    - name: The power-off is conditional on the guard verdict
+      ansible.builtin.assert:
+        that: (power_stop_task.when | default('') | string) is search('media_power_cleared')
+        fail_msg: >-
+          The "Stop the media containers" task in stack-power.yml is not gated on
+          media_power_cleared, so `pct shutdown` runs whatever the in-use guard
+          concluded — including on a Plex mid-transcode (PET-447).
+        success_msg: "`pct shutdown` runs only for hosts the graceful shutdown cleared"
