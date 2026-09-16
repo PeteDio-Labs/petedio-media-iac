@@ -94,15 +94,25 @@ Until step 3 lands, re-running `vault-seed.sh` will recreate the dead path.
 
 ## Seed (privileged — Vault admin/root token, not an AppRole)
 
+Run `petedio-iac`'s `scripts/seed-qbittorrent-vault.sh`. It prompts for both
+values silently, or takes them from `WIREGUARD_PRIVATE_KEY` and
+`WIREGUARD_ADDRESSES`, writes the path, reads it back to prove the write, and
+retires the stale `kv/services/qbittorrent` under `--retire-old`.
+
 ```bash
 export VAULT_ADDR=https://192.168.50.223:8200
 export VAULT_CACERT=/path/to/vault-ca.crt
-export VAULT_TOKEN=<admin/root token>   # the AppRoles can only READ services/*
+vault login                             # the AppRoles can only READ services/*
 
-vault kv put kv/services/media/qbittorrent \
-  wireguard_private_key='...' \
-  wireguard_addresses='...'
+cd ~/petedio/iac && ./scripts/seed-qbittorrent-vault.sh --retire-old
 ```
+
+> [!warning] Do not seed this by hand with `vault kv put key='value'`
+> This page told you to, until PET-452. A value passed as an argument lands on
+> the child process's argv, where any user on the box reads it out of `ps` or
+> `/proc/<pid>/cmdline` for as long as the process runs, and where your shell
+> history keeps it afterwards. PET-110 forbids it. The script pipes the value to
+> `vault kv put <path> -` on stdin instead, so it never reaches an argv.
 
 Note the absence of `qbit_password`. That is deliberate — see § `QBIT_WEBUI_PASSWORD` must NOT be seeded.
 
