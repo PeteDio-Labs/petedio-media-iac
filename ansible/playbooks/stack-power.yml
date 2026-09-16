@@ -30,6 +30,31 @@
   ansible.builtin.import_playbook: stack-down.yml
   when: power == 'off'
 
+# ⚠ WHY THIS PLAY EXISTS. `pct shutdown` used to run for all six VMIDs whatever
+# stack-down.yml had just concluded, which made the in-use guard decorative on
+# this path: the role leaves an in-use host running and says so with a `debug`,
+# the host succeeds, and the container was powered off underneath it anyway
+# (PET-447). The playbook header calls that out as the way to corrupt a library
+# database.
+#
+# A host reaches this play only if it survived stack-down.yml, because Ansible
+# drops a failed host from every later play. So an undefined `media_power_cleared`
+# means one of two things, and both of them mean "do not power this off":
+#   - the guard returned 'in-use' or 'unknown', so the service never stopped
+#   - the stop itself errored, which is the failure PET-447 was filed for
+#
+# `set_fact` runs on the controller, so this play opens no connection.
+- name: Record which hosts the graceful shutdown cleared
+  hosts: media:gpu-media
+  gather_facts: false
+  tasks:
+    - name: Mark this host clear to power off
+      ansible.builtin.set_fact:
+        media_power_cleared: true
+      when:
+        - power == 'off'
+        - media_in_use_state | default('idle') == 'idle'
+
 - name: Power the containers
   hosts: localhost
   gather_facts: false
@@ -51,19 +76,25 @@
     # loop with each item delegated to its own node.
     #
     # Order mirrors stack-down/up: shut consumers down first, boot producers first.
+    #
+    # `host` is the inventory hostname, and it is what ties a VMID to the guard
+    # verdict recorded above. Without it this loop has no way to ask whether the
+    # service on that container actually stopped (PET-447).
     media_power_shutdown_order:
-      - { vmid: 236, node: pve02 }   # plex-gpu    — consumer
-      - { vmid: 101, node: pve03 }   # seerr       — consumer
-      - { vmid: 104, node: pve03 }   # sonarr      — importer
-      - { vmid: 105, node: pve03 }   # radarr      — importer
-      - { vmid: 109, node: pve03 }   # prowlarr    — indexer
-      - { vmid: 110, node: pve02 }   # qbittorrent — downloader
+      - { vmid: 236, node: pve02, host: plex-gpu }         # consumer
+      - { vmid: 101, node: pve03, host: seerr }            # consumer
+      - { vmid: 104, node: pve03, host: sonarr }           # importer
+      - { vmid: 105, node: pve03, host: radarr }           # importer
+      - { vmid: 109, node: pve03, host: prowlarr }         # indexer
+      - { vmid: 110, node: pve02, host: qbittorrent-vpn }  # downloader
   tasks:
     - name: Stop the media containers
       ansible.builtin.command: "pct shutdown {{ item.vmid }} --timeout 120"
       delegate_to: "{{ item.node }}"
       loop: "{{ media_power_shutdown_order }}"
-      when: power == 'off'
+      when:
+        - power == 'off'
+        - hostvars[item.host]['media_power_cleared'] | default(false) | bool
       register: pct_stop
       changed_when: pct_stop.rc == 0
       # A container that is already stopped exits non-zero; that is success here.
@@ -99,8 +130,11 @@
 
 # Containers need a moment for sshd before Ansible can reach them; stack-up's
 # per-tier port waits absorb the rest.
+# media:gpu-media, not media: 236 is in gpu-media, so `hosts: media` skipped the
+# one container that had just been started and handed straight to stack-up.yml,
+# which then reached for a Plex whose sshd might not be listening (PET-447).
 - name: Wait for the containers to accept SSH
-  hosts: media
+  hosts: media:gpu-media
   gather_facts: false
   tasks:
     - name: Wait for SSH
@@ -111,3 +145,42 @@
 - name: Ordered service start after power-on
   ansible.builtin.import_playbook: stack-up.yml
   when: power == 'on'
+
+# ------------------------------------------------------------------------------
+# A held container is not a clean power-off, and must not look like one: the RAM
+# you asked for is still committed. This play is separate, and last, so the
+# `pct list` report above still prints — that report is the most useful thing to
+# read when something was held.
+- name: Refuse to report a clean power-off when a container was held
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Loop items whose condition was false. Derived from what the loop did rather
+    # than recomputed, so the two can never disagree.
+    media_power_held: >-
+      {{ (pct_stop | default({})).results | default([])
+         | selectattr('skipped', 'defined') | map(attribute='item') | list }}
+  tasks:
+    - name: Name each container the guard held
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.host }} ({{ item.vmid }} on {{ item.node }}) left powered on:
+          {{ hostvars[item.host]['media_in_use_reason']
+             | default('its service shutdown failed, so nothing cleared it') }}
+      loop: "{{ media_power_held }}"
+      loop_control:
+        label: "{{ item.host }}"
+      when: power == 'off'
+
+    - name: Fail, because the stack is not powered off
+      ansible.builtin.fail:
+        msg: >-
+          {{ media_power_held | length }} of
+          {{ (pct_stop | default({})).results | default([]) | length }} containers
+          are still running:
+          {{ media_power_held | map(attribute='host') | join(', ') }}.
+          Their services were not cleared, so `pct shutdown` was not run for them.
+          Re-run with -e media_lifecycle_force=true to power them off anyway.
+      when:
+        - power == 'off'
+        - media_power_held | length > 0

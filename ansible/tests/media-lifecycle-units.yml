@@ -12,7 +12,8 @@
 # warning and reports success, and media-lifecycle picked its in-use probe from a
 # hostname list carrying the same dead name. So the only Plex was stopped with no
 # guard, against a unit name derived from the inventory hostname that 236 does
-# not publish. Nothing in the repo could fail on any of that. These four
+# not publish. And stack-power.yml powered the container off regardless of what
+# that guard concluded. Nothing in the repo could fail on any of it. These
 # assertions can.
 ---
 - name: Lifecycle units — the hosts stack-down names resolve to real services
@@ -123,3 +124,73 @@
           only Plex without asking whether anyone is watching.
         success_msg: "plex-gpu guards with in-use-{{ resolved_probe }}.yml"
       when: inventory_hostname == 'plex-gpu'
+
+# ------------------------------------------------------------------------------
+# stack-power.yml holds the only hand-written VMID map in the repo, and the one
+# path that can power a container off. Both are checked here rather than trusted.
+- name: Lifecycle power — the power-off map matches the inventory and reads the guard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    power_plays: >-
+      {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/stack-power.yml') | from_yaml)
+         | selectattr('vars', 'defined')
+         | selectattr('vars.media_power_shutdown_order', 'defined') | list }}
+    power_map: >-
+      {{ power_plays | map(attribute='vars.media_power_shutdown_order') | first | default([]) }}
+    # default='' rather than a bare attribute lookup: on a tree whose map carries
+    # only vmid and node — the tree this test was written against — a bare lookup
+    # raises, and an error reads as "the test is broken" when the answer is "the
+    # map is". The first assertion below turns that into a sentence.
+    power_hosts: "{{ power_map | map(attribute='host', default='') | list }}"
+    power_stop_task: >-
+      {{ power_plays | map(attribute='tasks') | first | default([])
+         | selectattr('name', 'equalto', 'Stop the media containers') | first | default({}) }}
+    managed_hosts: "{{ (groups['media'] | default([])) + (groups['gpu-media'] | default([])) }}"
+  tasks:
+    # 5. Each entry says which host it is powering off. Without that key the map
+    #    cannot be checked against anything, and the power-off cannot read a guard.
+    - name: Every entry in the power-off map names its host
+      ansible.builtin.assert:
+        that: power_hosts | select('equalto', '') | length == 0
+        fail_msg: >-
+          {{ power_hosts | select('equalto', '') | length }} of
+          {{ power_map | length }} entries in media_power_shutdown_order declare no
+          `host`, so nothing ties that VMID to the in-use guard for the service
+          running on it.
+        success_msg: "all {{ power_map | length }} map entries name their host"
+
+    # 6. The map is not stale. A single-node loop naming a dead node and dead
+    #    VMIDs is what PET-354 found here, and the play's own comment says a
+    #    stale map is the failure to fail on.
+    - name: Every container the power-off names is a host in the inventory
+      ansible.builtin.assert:
+        that: power_hosts | difference(managed_hosts) | length == 0
+        fail_msg: >-
+          stack-power.yml powers off {{ power_hosts | difference(managed_hosts) }},
+          which match no host in media:gpu-media. A stale map powers off a VMID
+          nobody is guarding.
+        success_msg: "the power-off map names {{ power_hosts | join(', ') }}"
+
+    - name: Every managed host is in the power-off map
+      ansible.builtin.assert:
+        that: managed_hosts | difference(power_hosts) | length == 0
+        fail_msg: >-
+          {{ managed_hosts | difference(power_hosts) }} are in media:gpu-media but
+          absent from stack-power.yml, so `-e power=off` leaves them running and
+          reclaims none of their RAM.
+        success_msg: "all {{ managed_hosts | length }} managed hosts are in the map"
+
+    # 7. The power-off asks the guard. Without this condition the in-use check is
+    #    decorative on this path: media-lifecycle leaves an in-use host running
+    #    with a `debug`, the host succeeds, and `pct shutdown` ran anyway.
+    - name: The power-off is conditional on the guard verdict
+      ansible.builtin.assert:
+        that: (power_stop_task.when | default('') | string) is search('media_power_cleared')
+        fail_msg: >-
+          The "Stop the media containers" task in stack-power.yml is not gated on
+          media_power_cleared, so `pct shutdown` runs whatever the in-use guard
+          concluded — including on a Plex mid-transcode (PET-447).
+        success_msg: "`pct shutdown` runs only for hosts the graceful shutdown cleared"
