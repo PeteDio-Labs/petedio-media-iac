@@ -27,14 +27,32 @@ and the per-app config is still the unbacked-up part either way.)
 ⚠ Everything this section used to describe was destroyed on 2026-09-03. The stores
 were LVM logical volumes on pve01's `sdb` (`media-vg/media-lv`, `media-vg/downloads-lv`,
 both ext4) behind a PERC H710 that failed and took 2.6 TB of library with it. They no
-longer exist in any form. Re-measured on pve02 2026-09-06 (PET-354):
+longer exist in any form. The pools that replaced them, on pve02:
 
-| ZFS pool | Layout | Size (used) | Host mountpoint | Holds |
-|---|---|---|---|---|
-| `media` | RAIDZ1, 4 × 953.9G USB SSD | 2.7T (**173G, 7%**) | `/mnt/media` | Plex/\*arr media library |
-| `downloads` | single 894.3G USB SSD | 861G (**5.4G, 1%**) | `/mnt/downloads` | qBittorrent downloads |
+| ZFS pool | Layout | Host mountpoint | Holds |
+|---|---|---|---|
+| `media` | RAIDZ1, 4 × 953.9G USB SSD | `/mnt/media` | Plex/\*arr media library |
+| `downloads` | single 894.3G USB SSD | `/mnt/downloads` | qBittorrent downloads |
 
-> That 7% is not headroom won, it is the hole the outage left: the library was 2.5T
+**Layout is durable; usage is not, so read it rather than trusting this page.**
+
+```bash
+ssh root@192.168.50.11 'zfs list; zpool list'
+```
+
+⚠ **The two tools disagree on purpose, and the gap is the parity.** `zpool list`
+reports **raw** capacity — for a four-disk RAIDZ1 that is 3.72T, about a quarter of
+which can never hold data. `zfs list` reports what a file can actually use. Quote
+`zfs list` for "how full is the library", and say which tool a figure came from.
+Reading a RAIDZ1 `zpool list` CAP as free space overstates it by the parity disk.
+
+Last reading, `zfs list` on pve02 at **2026-09-15 23:56 EDT**: `media` USED 277G,
+AVAIL 2.35T, about 10% of 2.6T usable; `downloads` USED 8.06M, AVAIL 860G. Both
+pools ONLINE, last scrub 2026-09-13, 0 errors. Treat that as a datum with a
+timestamp: `media` moved 268G to 277G in the two hours before it was taken, and
+`downloads` is scratch that empties as imports complete.
+
+> That ~10% is not headroom won, it is the hole the outage left: the library was 2.5T
 > at 81% before the failure. The `downloads-lv` growth warning that used to sit here
 > (23G → 115G in a month) is moot — the volume it described is gone.
 >

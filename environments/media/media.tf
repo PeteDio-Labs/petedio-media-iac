@@ -5,12 +5,14 @@
 #
 # WHO SITS WHERE, AND WHY
 #
-#   pve03   sonarr, radarr, prowlarr
+#   pve03   seerr, sonarr, radarr, prowlarr
 #           The arr apps write imports as bulk sequential copies on a schedule,
 #           which tolerates the network fine. Moving them means the library and
-#           the applications that write to it no longer share a host.
+#           the applications that write to it no longer share a host. seerr is
+#           here because it touches no media path at all — no bind mounts, neither
+#           pool — so it belongs with the platform tier (PET-334).
 #
-#   pve02   plex-gpu, qbittorrent-vpn, seerr
+#   pve02   plex-gpu, qbittorrent-vpn
 #           Plex STAYS WITH THE DISKS. Playback is latency-sensitive and
 #           read-heavy, and inotify does not cross NFS -- putting Plex on the
 #           far side would cost filesystem-event scanning, which going local
@@ -34,22 +36,34 @@
 # flag is true rather than a lie to get past the check.
 
 # Media stack — brownfield capture (PET-46). One module block per RUNNING LXC,
-# encoding each host's REAL shape (ground-truthed off pve01 via `pct config`,
-# 2026-06-04) so `terraform import` + `plan` is a clean no-op (zero drift).
+# encoding each host's REAL shape so `terraform import` + `plan` is a clean no-op
+# (zero drift). The original capture was read off pve01 on 2026-06-04; the shapes
+# below have been re-grounded against pve02 and pve03 since that node died.
 #
-# NOT in this file: filebrowser (102) — old file/image store, excluded and
-# flagged for decommission (PET-82).
+# NOT in this file: flaresolverr (102) on pve03 — DHCP, deliberately unmanaged.
+# VMID 102 was filebrowser, decommissioned in PET-82, and the NUMBER WAS REUSED.
+# The app is gone; the number is in service.
 #
 # Per-host variances captured below:
-#   - rootfs datastore: local-lvm (most) vs sdb3-storage (seerr/sonarr/radarr)
-#   - mount target paths differ per container (/mnt/media vs /media, etc.)
-#   - plex (103) is DUAL-HOMED: net0 vmbr0/.86 mesh + net1 vmbr1/.50 LAN
+#   - rootfs datastore: local-lvm on pve02 (110, 236) vs the plain `local`
+#     directory store on pve03 (101, 104, 105, 109), which has no thin pool
+#   - mount target paths differ per container (/mnt/media vs /media, etc.), and
+#     104, 105 and 109 carry shared=1 on both bind mounts, which is what let them
+#     migrate to pve03 (Proxmox refuses to migrate an unflagged local bind mount)
+#   - plex-gpu (236) is the DUAL-HOMED host: net0 vmbr0/.50 LAN (default route)
+#     + net1 vmbr2/.86 mesh (PET-444). Read that mapping carefully — the pve01-era
+#     comment here had it inverted, and named plex 103, which no longer exists.
 #   - seerr (101) has NO bind-mounts and its only NIC is eth1 (firewall on)
-#   - qbittorrent-vpn (110) + plex + seerr have the Proxmox firewall enabled
+#   - qbittorrent-vpn (110), plex-gpu and seerr have the Proxmox firewall enabled
 #
-# VMIDs are the LIVE legacy numbers (not the target 21x scheme — renumber is
-# deferred, PET-49). Mount-point import behaviour for host-dir bind mounts is
-# verified during the import iteration; adjust `mount_points` until plan no-ops.
+# NOTHING IS ON vmbr1 OR sdb3-storage. Both belonged to pve01: sdb3-storage is
+# `disabled` in `pvesm status`, and on pve02 vmbr1 is the dead VXLAN leg. Several
+# per-host comments below still named them and have been corrected.
+#
+# VMIDs are the LIVE legacy numbers. The 21x renumber is CANCELED (PET-49,
+# 2026-07-21), not deferred — nothing is waiting on it. Mount-point import
+# behaviour for host-dir bind mounts is verified during the import iteration;
+# adjust `mount_points` until plan no-ops.
 
 locals {
   # /mnt/media + /mnt/downloads live on the Proxmox host and are bind-mounted
@@ -252,7 +266,7 @@ module "plex_gpu" {
   # mounted and non-empty inside the container and will fail without it.
 }
 
-# sonarr 104/.15 — sdb3-storage 4G, vmbr1
+# sonarr 104/.15 on pve03 — `local` 4G, vmbr0
 module "sonarr" {
   source = "../../modules/proxmox-lxc"
 
@@ -274,7 +288,7 @@ module "sonarr" {
   ]
 }
 
-# radarr 105/.16 — sdb3-storage 4G, vmbr1
+# radarr 105/.16 on pve03 — `local` 4G, vmbr0
 module "radarr" {
   source = "../../modules/proxmox-lxc"
 
@@ -296,7 +310,7 @@ module "radarr" {
   ]
 }
 
-# prowlarr 109/.20 — local-lvm 4G, vmbr1 (the "media-extra" mislabel in the doc)
+# prowlarr 109/.20 on pve03 — `local` 4G, vmbr0 (the "media-extra" mislabel in the doc)
 module "prowlarr" {
   source = "../../modules/proxmox-lxc"
 
@@ -317,8 +331,11 @@ module "prowlarr" {
   ]
 }
 
-# qbittorrent-vpn 110/.21 — local-lvm 20G, vmbr1 (firewall on). Gluetun/Proton.
-# Also present in the OLD homelab-infra TF state — reconcile (state rm old side).
+# qbittorrent-vpn 110/.21 on pve02 — local-lvm 20G, vmbr0 (firewall on). Gluetun/Proton.
+# The "also in the OLD homelab-infra TF state, reconcile" note here was RESOLVED on
+# 2026-08-11 and the finding is recorded in CLAUDE.md: the tfstate bucket holds three
+# objects and petedio-iac's state lists no media VMID, so there was no old side to
+# `state rm`. Nothing is pending on this block.
 module "qbittorrent_vpn" {
   source = "../../modules/proxmox-lxc"
 

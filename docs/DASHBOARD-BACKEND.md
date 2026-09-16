@@ -14,7 +14,9 @@ Everything here is shaped by four constraints the capability review turned up,
 and they drive more of the design than any preference does:
 
 1. **The joins are cheap, the credentials are not.** The data model is easy; holding
-   seven credentials centrally is the actual cost.
+   the keys centrally is the actual cost. The count here was seven, then six once the
+   absent qBittorrent password was checked, and five once lidarr went in PET-319. The
+   cost never depended on the number — see §4.
 2. **Gluetun's control API is loopback-bound on LXC 110.** A remote backend cannot
    reach the single most useful VPN signal without a deliberate posture change.
 3. **Planned downtime is normal in this stack.** `stack-down.yml` exists, the *arr
@@ -103,7 +105,12 @@ adopt.
 
 **Revised call: take the next free number in the legacy block.** The only reason to
 prefer 21x was forward-compatibility with a migration that is not going to happen.
-Worth Pedro confirming, since it reverses the earlier recommendation.
+
+**Settled: it shipped as 237.** mtrace runs on `media-dash-237` (192.168.50.237, pve03)
+since 2026-09-09. The number is neither legacy 1xx nor 21x — it sits in the 2xx
+platform block with the other infrastructure guests, which is where a thing that
+watches the media stack without being part of it belongs. plex-gpu 236 is numbered on
+the same reasoning.
 
 ### Gluetun: three options, one recommendation
 
@@ -126,14 +133,21 @@ Today every key is read on the host it belongs to and used over loopback —
 `roles/servarr` is explicit that *"the API key never leaves the container."* A daemon
 cannot preserve that, so this needs to be done deliberately.
 
-**Vault layout.** `kv/services/media/dashboard/` holding the seven credentials, read by
-a new read-only `media-dashboard` policy and AppRole. Separate from the `ansible`
-policy — the dashboard should not be able to read what Ansible can.
+**Vault layout.** `kv/services/media/dashboard/` holding the credentials, read by a
+new read-only `media-dashboard` policy and AppRole. Separate from the `ansible` policy
+— the dashboard should not be able to read what Ansible can.
 
-**The capture step comes first.** The four *arr keys exist only in each host's
-`config.xml`; nothing has ever written them to Vault. That is a one-time Ansible task
-(slurp → write) needing a policy with create/update on that path — the same shape as
-the still-pending qBittorrent secret seed, which already has a runbook at
+> **None of this was built.** mtrace holds no *arr keys: it carries one SSH keypair and
+> one bearer token, and reads each app from its own host over loopback, which is the
+> property §4 opens by saying a daemon cannot preserve. The path
+> `kv/services/media/dashboard/` does not exist. Read the rest of this section as the
+> cost that was avoided.
+
+**The capture step comes first.** The *arr keys — three of them since PET-319 — exist
+only in each host's `config.xml`; nothing has ever written them to Vault. That is a
+one-time Ansible task (slurp → write) needing a policy with create/update on that
+path — the same shape as the still-pending qBittorrent secret seed, which already has
+a runbook at
 [runbooks/qbittorrent-vault-secret.md](runbooks/qbittorrent-vault-secret.md). Worth
 doing both in one privileged session.
 
@@ -142,8 +156,8 @@ via `EnvironmentFile=`. The app stays ignorant of Vault, token renewal is the ag
 problem, and no secret is ever written into the repo or an image.
 
 **Blast radius, stated plainly.** This LXC becomes the highest-value target in the
-media stack: four *arr keys (each equivalent to full control of its app), the seerr
-key, and the Plex token — **six**, not seven, all in one process. Phase 1 stays
+media stack: three *arr keys (each equivalent to full control of its app), the seerr
+key, and the Plex token — **five**, all in one process. Phase 1 stays
 read-only, the host keeps the Proxmox firewall on with only the UI port inbound, and
 Phase 2 does not ship without auth in front of it.
 

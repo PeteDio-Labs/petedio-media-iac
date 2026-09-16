@@ -11,8 +11,10 @@ Part of the PeteDio homelab→AWS platform. Tracker: Plane (workspace `petedio`,
 **The capture is complete** — PET-46 (import), PET-47 (Ansible), PET-53 (topology),
 PET-114 and PET-163 (CI) are all Done, the media LXCs are in the cluster resource
 pool (PET-56), and apply-on-merge has been enabled since 2026-08-11. PET-48
-(data-volume documentation) is the one issue still open; PET-49 (renumber to 21x)
-was **canceled**, so the legacy VMIDs are permanent.
+(data-volume documentation) is **Done** too: it shipped as
+[docs/data-volumes.md](docs/data-volumes.md), and the PR it was once tied to, #3,
+was closed unmerged on 2026-08-13. PET-49 (renumber to 21x) was **canceled**, so
+the legacy VMIDs are permanent.
 
 ## What's here
 

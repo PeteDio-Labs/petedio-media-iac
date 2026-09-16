@@ -1,7 +1,13 @@
 # Reusable Debian LXC on Proxmox — the EC2-equivalent building block.
 # Copied verbatim from petedio-iac (the proven runner/poker pattern) and extended
-# with an OPTIONAL second network interface (var.net1_*) for the dual-homed plex
-# host (net0 on the .86 mesh / vmbr0 + net1 on the .50 LAN / vmbr1).
+# with an OPTIONAL second network interface (var.net1_*) for a dual-homed host.
+#
+# ⚠ THE MAPPING IS INVERTED FROM WHAT THIS COMMENT USED TO SAY. It described plex
+# 103 on pve01: net0 on the .86 mesh via vmbr0, net1 on the .50 LAN via vmbr1.
+# That host died with pve01 on 2026-09-03. The one dual-homed host is plex-gpu 236
+# on pve02: net0 = vmbr0, 192.168.50.236/24, the LAN and the default route; net1 =
+# vmbr2, 192.168.86.236/24, the mesh (PET-444). pve02's vmbr1 is the dead VXLAN leg
+# to pve01 and carries nothing — putting a NIC there gives it no route.
 #
 # Deliberately NO `features {}` block: Proxmox rejects API tokens for the
 # features mutation (root@pam check), so nesting/keyctl are set out-of-band by
@@ -92,8 +98,10 @@ resource "proxmox_virtual_environment_container" "this" {
     firewall = var.firewall
   }
 
-  # Second NIC for dual-homed hosts (plex: eth1 on vmbr1). Only created when
-  # var.net1_bridge is set, so single-homed hosts are unaffected.
+  # Second NIC for dual-homed hosts — today only plex-gpu 236, eth1 on vmbr2 (the
+  # .86 mesh). Only created when var.net1_bridge is set, so single-homed hosts are
+  # unaffected. The bridge is the caller's to name; do not assume vmbr1, which on
+  # pve02 is the dead VXLAN leg.
   dynamic "network_interface" {
     for_each = var.net1_bridge != null ? [1] : []
     content {
@@ -115,7 +123,7 @@ resource "proxmox_virtual_environment_container" "this" {
     }
   }
 
-  # Host device passthrough (plex-gpu 107: /dev/dri/renderD128 for Quick Sync).
+  # Host device passthrough (plex-gpu 236: /dev/dri/renderD128 for Quick Sync).
   # Only emitted when var.device_passthrough is non-empty, so every existing
   # media LXC plans unchanged. Proxmox writes these as `dev0:` entries and sets
   # the unprivileged container's cgroup device rules itself, which is why this
@@ -185,9 +193,16 @@ resource "proxmox_virtual_environment_container" "this" {
       # that PET-305 put on every media LXC before the lab move — a regression
       # that only shows up at the next cold boot. petedio-iac's copy of this
       # module carries the same entry for the same reason; this one was missed
-      # because PET-305 never applied media-iac. Verified on the cluster:
-      # 100/101/103/104/105/109 are order=7,up=0,down=15 and 110 is
-      # order=6,up=20,down=30. Recorded in petedio-iac docs/runbooks/lab-move.md.
+      # because PET-305 never applied media-iac. Recorded in petedio-iac
+      # docs/runbooks/lab-move.md.
+      #
+      # The PET-305 list read 100/101/103/104/105/109 at order=7,up=0,down=15 and
+      # 110 at order=6,up=20,down=30. Two of those guests are gone: lidarr 100
+      # (PET-319) and plex 103 (died with pve01). Read on both nodes 2026-09-16:
+      # 101/104/105/109 still order=7,up=0,down=15 and 110 still
+      # order=6,up=20,down=30 — but plex-gpu 236 has NO startup line at all, so
+      # the only Plex has no boot ordering. PET-451 is the `pct set` that fixes
+      # that, and it needs root@pam.
       startup,
     ]
   }
