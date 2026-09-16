@@ -1,0 +1,108 @@
+# Regression test for roles/qbittorrent-vpn/tasks/guard.yml, the update guard (PET-456).
+#
+#   cd ansible
+#   ansible-playbook tests/qbit-update-guard.yml
+#
+# Runs on localhost and touches nothing. It feeds the guard recorded answers and
+# asserts the resolved count AND whether the play was refused, which is the part
+# that decides anything.
+#
+# Expect three 'fatal' lines and rescued=3 in the recap: that is the guard
+# refusing, caught so the refusal can be asserted rather than end the run.
+#
+# WHAT IT EXISTS TO CATCH. -1 already meant "could not determine" when the pull
+# task read `when: qbit_active_count | int <= 0`, which let -1 through as
+# permission to update. The guard now fails on -1 unless qbit_update_force is
+# set, and every case below reports what the old expression would have done with
+# the same answer — so the fail-open is shown, not argued.
+- name: qBittorrent update guard — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    qbit_dir: /opt/qbittorrent-vpn
+    qbit_container: qbittorrent
+    guard_cases:
+      # A stopped stack is 0, not -1: an update against a down stack is a normal
+      # thing to want, and nothing can be downloading when nothing is running.
+      - name: project down
+        ps: {rc: 0, stdout: '', stderr: ''}
+        active: {skipped: true}
+        force: false
+        want_count: 0
+        want_refused: false
+
+      - name: nothing downloading
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 0, stdout: '[]', stderr: ''}
+        force: false
+        want_count: 0
+        want_refused: false
+
+      # In flight: skipped, not refused. The update waits; the play succeeds.
+      - name: three downloading
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active:
+          rc: 0
+          stdout: '[{"name":"a"},{"name":"b"},{"name":"c"}]'
+          stderr: ''
+        force: false
+        want_count: 3
+        want_refused: false
+
+      - name: three downloading, forced
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active:
+          rc: 0
+          stdout: '[{"name":"a"},{"name":"b"},{"name":"c"}]'
+          stderr: ''
+        force: true
+        want_count: 3
+        want_refused: false
+
+      # ---------------------------------------------------- the -1 path, both ways --
+      # rc=0 and not a torrent list. The old expression scored this 0 and updated.
+      - name: WebUI answers Forbidden (rc=0)
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 0, stdout: 'Forbidden', stderr: ''}
+        force: false
+        want_count: -1
+        want_refused: true
+
+      - name: WebUI answers Forbidden (rc=0), forced
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 0, stdout: 'Forbidden', stderr: ''}
+        force: true
+        want_count: -1
+        want_refused: false
+
+      - name: curl timed out inside the namespace
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 28, stdout: '', stderr: 'curl: (28) Operation timed out after 15001 milliseconds'}
+        force: false
+        want_count: -1
+        want_refused: true
+
+      - name: curl timed out inside the namespace, forced
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 28, stdout: '', stderr: 'curl: (28) Operation timed out after 15001 milliseconds'}
+        force: true
+        want_count: -1
+        want_refused: false
+
+      # Docker itself is gone. The first branch needs rc=0 to call the stack down,
+      # so this falls through to -1 rather than reading as "nothing running".
+      - name: docker daemon not answering
+        ps: {rc: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock.'}
+        active: {skipped: true}
+        force: false
+        want_count: -1
+        want_refused: true
+  tasks:
+    - name: Classify each recorded answer
+      ansible.builtin.include_tasks: cases/qbit-update-guard-case.yml
+      loop: "{{ guard_cases }}"
+      loop_control:
+        loop_var: guard_case
+        label: "{{ guard_case.name }}"

@@ -1,0 +1,95 @@
+# Regression test for roles/media-lifecycle/tasks/classify-qbittorrent-vpn.yml (PET-456).
+#
+#   cd ansible
+#   ansible-playbook tests/media-lifecycle-qbit-probe.yml
+#
+# Runs on localhost and touches nothing — no docker daemon, no qBittorrent, no
+# VPN. It feeds the classifier recorded answers and asserts both the verdict and
+# the branch the role would take from it.
+#
+# WHAT IT EXISTS TO CATCH. Every answer below except the first three is one the
+# live stack will not produce on demand, and they are the answers the guard
+# exists for. The one that matters most is "Forbidden": curl reports rc=0,
+# because it did get an HTTP response, so a guard that reads rc alone counts an
+# auth failure as zero torrents downloading and authorises the stop.
+- name: media-lifecycle qBittorrent probe — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    # Real values: the classifier names both in its reasons, so a reason that
+    # reads wrong in the recap reads wrong here too.
+    qbit_dir: /opt/qbittorrent-vpn
+    qbit_container: qbittorrent
+    probe_cases:
+      # `docker compose ps` failing is not a quiet condition — the host that runs
+      # the media stack has lost its container runtime. Answering 'idle' there
+      # would hand out permission to stop a service nobody can see the state of.
+      - name: docker daemon not answering
+        ps: {rc: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock.'}
+        active: {skipped: true}
+        want: unknown
+        want_action: REFUSE
+
+      # Docker answered and the project is down. Nothing can be downloading when
+      # nothing is running, and this branch is what keeps a re-run of
+      # stack-down.yml idempotent instead of refusing on an already-stopped stack.
+      - name: project already down
+        ps: {rc: 0, stdout: '', stderr: ''}
+        active: {skipped: true}
+        want: idle
+        want_action: STOP
+
+      - name: nothing downloading
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 0, stdout: '[]', stderr: ''}
+        want: idle
+        want_action: STOP
+
+      - name: two downloading
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active:
+          rc: 0
+          stdout: '[{"name":"a","state":"downloading"},{"name":"b","state":"stalledDL"}]'
+          stderr: ''
+        want: in-use
+        want_action: skip
+
+      # rc=0 and not a torrent list. curl succeeded; qBittorrent refused. This is
+      # the fail-open case: an answer that looks like success and measures nothing.
+      - name: WebUI answers Forbidden (rc=0)
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 0, stdout: 'Forbidden', stderr: ''}
+        want: unknown
+        want_action: REFUSE
+
+      - name: curl timed out inside the namespace
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 28, stdout: '', stderr: 'curl: (28) Operation timed out after 15001 milliseconds'}
+        want: unknown
+        want_action: REFUSE
+
+      # A renamed or mistyped qbit_container. The project IS up, so the stack is
+      # running and something may well be downloading — the probe simply cannot
+      # reach it. Reading this as idle is how a rename turns into a stop mid-transfer.
+      - name: container name does not exist
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {rc: 1, stdout: '', stderr: 'Error response from daemon: No such container: qbittorrent'}
+        want: unknown
+        want_action: REFUSE
+
+      # The project is up but the counting task never ran — a skipped task leaves
+      # a register with no rc at all. That is not a measurement either.
+      - name: count task skipped while the project is up
+        ps: {rc: 0, stdout: "d34db33fc0de\n", stderr: ''}
+        active: {skipped: true, changed: false}
+        want: unknown
+        want_action: REFUSE
+  tasks:
+    - name: Classify each recorded answer
+      ansible.builtin.include_tasks: cases/media-lifecycle-qbit-probe-case.yml
+      loop: "{{ probe_cases }}"
+      loop_control:
+        loop_var: probe_case
+        label: "{{ probe_case.name }}"

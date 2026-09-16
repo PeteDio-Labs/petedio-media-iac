@@ -1,0 +1,35 @@
+# One case for tests/media-lifecycle-plex-probe.yml. Included once per recorded answer.
+---
+- name: "{{ probe_case.name }} — load the recorded registers"
+  ansible.builtin.set_fact:
+    lifecycle_plex_unit: {stdout: "{{ probe_case.unit }}"}
+    lifecycle_plex_sessions: "{{ probe_case.sessions }}"
+    # Cleared between cases so a stale verdict cannot pass for a fresh one.
+    media_in_use_state: unset
+    media_in_use_reason: unset
+
+- name: "{{ probe_case.name }} — classify"
+  ansible.builtin.include_tasks: ../../roles/media-lifecycle/tasks/classify-plex.yml
+
+# A verdict is only half the answer. What the ROLE does with it is the behaviour
+# the stop depends on, and it is a different branch for each of the three states,
+# so assert that too — role tasks/main.yml stops only on 'idle'.
+- name: "{{ probe_case.name }} — what the role would do"
+  ansible.builtin.set_fact:
+    probe_action: >-
+      {{ 'STOP' if media_in_use_state == 'idle'
+         else 'skip' if media_in_use_state == 'in-use'
+         else 'REFUSE' }}
+
+- name: "{{ probe_case.name }} — assert the verdict"
+  ansible.builtin.assert:
+    that:
+      - media_in_use_state == probe_case.want
+      - probe_action == probe_case.want_action
+    fail_msg: >-
+      {{ probe_case.name }}: probe says {{ media_in_use_state }}
+      ({{ media_in_use_reason }}) and the role would {{ probe_action }};
+      want {{ probe_case.want }} / {{ probe_case.want_action }}.
+    success_msg: >-
+      {{ probe_case.name }}: {{ media_in_use_state }} — {{ media_in_use_reason }}.
+      The role would {{ probe_action }}.

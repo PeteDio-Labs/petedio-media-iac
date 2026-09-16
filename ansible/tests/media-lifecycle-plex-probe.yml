@@ -1,0 +1,103 @@
+# Regression test for roles/media-lifecycle/tasks/classify-plex.yml (PET-456).
+#
+#   cd ansible
+#   ansible-playbook tests/media-lifecycle-plex-probe.yml
+#
+# Runs on localhost and touches nothing. It feeds the classifier recorded answers,
+# including failures a live Plex will not produce on demand, and asserts both the
+# verdict and the branch the role would take from it.
+#
+# WHAT IT EXISTS TO CATCH. The three-state rework landed the right logic in the
+# wrong place: the classification sat inline in in-use-plex.yml, between two I/O
+# tasks, so nothing could reach it without a running Plex on a reachable host.
+# The logic was argued in comments and never executed. Splitting the probe into
+# collect (in-use-plex.yml) and classify (classify-plex.yml) is what makes these
+# six answers runnable on a GitHub-hosted runner.
+- name: media-lifecycle Plex probe — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    # The classifier names the unit in its "not running" reason. Real value, so a
+    # reason string that reads wrong in the recap reads wrong here too.
+    media_service_unit: plexmediaserver
+    probe_cases:
+      - name: unit stopped
+        unit: inactive
+        sessions: {skipped: true}
+        want: idle
+        want_action: STOP
+
+      - name: nobody watching
+        unit: active
+        sessions:
+          status: 200
+          content: '<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="0"></MediaContainer>'
+        want: idle
+        want_action: STOP
+
+      - name: two watching
+        unit: active
+        sessions:
+          status: 200
+          content: '<MediaContainer size="2"><Video type="episode"/><Video type="movie"/></MediaContainer>'
+        want: in-use
+        want_action: skip
+
+      # A 200 that is not the document asked for. The count is what is read, so
+      # its absence has to mean "cannot tell", never "zero".
+      - name: 200 without a count
+        unit: active
+        sessions:
+          status: 200
+          content: '<html><body>maintenance</body></html>'
+        want: unknown
+        want_action: REFUSE
+
+      - name: token rejected
+        unit: active
+        sessions:
+          status: 403
+          content: '<html><head><title>Forbidden</title></head></html>'
+        want: unknown
+        want_action: REFUSE
+
+      # uri reports a refused connection and a timeout the same way: status -1,
+      # no content. Both are "Plex did not answer", and neither is "nobody is
+      # watching" — the distinction the guard exists for.
+      - name: connection refused
+        unit: active
+        sessions:
+          status: -1
+          msg: 'Status code was -1 and not [200]: Request failed: <urlopen error [Errno 111] Connection refused>'
+        want: unknown
+        want_action: REFUSE
+
+      - name: timeout
+        unit: active
+        sessions:
+          status: -1
+          msg: 'Status code was -1 and not [200]: Request failed: <urlopen error timed out>'
+        want: unknown
+        want_action: REFUSE
+
+      # THE CHECK-MODE CASE. ansible.builtin.uri does not support check mode, so
+      # without `check_mode: false` on the collecting task a --check run skips it
+      # and the register carries no status at all. The classifier is right to call
+      # that 'unknown' — but the consequence is that a rehearsal of stack-down.yml
+      # refuses the very stop it is meant to rehearse. This case pins the verdict;
+      # `check_mode: false` in in-use-plex.yml is what keeps a check run from
+      # reaching it.
+      - name: sessions task skipped (check mode, no check_mode:false)
+        unit: active
+        sessions: {skipped: true, changed: false}
+        want: unknown
+        want_action: REFUSE
+  tasks:
+    - name: Classify each recorded answer
+      ansible.builtin.include_tasks: cases/media-lifecycle-plex-probe-case.yml
+      loop: "{{ probe_cases }}"
+      loop_control:
+        loop_var: probe_case
+        label: "{{ probe_case.name }}"

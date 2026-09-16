@@ -1,0 +1,45 @@
+# One case for tests/qbit-update-guard.yml. Included once per recorded answer.
+---
+- name: "{{ guard_case.name }} — load the recorded registers"
+  ansible.builtin.set_fact:
+    qbit_ps: "{{ guard_case.ps }}"
+    qbit_active: "{{ guard_case.active }}"
+    qbit_update_force: "{{ guard_case.force }}"
+    qbit_active_count: unset
+    guard_refused: false
+
+# The guard's refusal is a failed play, not a returned value, so catching it is
+# the only way to assert on it. rescue: fires for a failure raised inside a
+# dynamic include, which is what makes the refusing path testable at all.
+- name: "{{ guard_case.name }} — run the guard"
+  block:
+    - name: "{{ guard_case.name }} — classify"
+      ansible.builtin.include_tasks: ../../roles/qbittorrent-vpn/tasks/guard.yml
+  rescue:
+    - name: "{{ guard_case.name }} — the guard refused"
+      ansible.builtin.set_fact:
+        guard_refused: true
+
+# The expression this change replaced, verbatim, on the same answer: `<= 0` read
+# -1 as permission to update. Having a third state is worthless unless something
+# acts on it, and this line is what shows the difference rather than asserting it.
+- name: "{{ guard_case.name }} — what the guard before PET-395 would have done"
+  ansible.builtin.set_fact:
+    guard_old: "{{ 'update' if (qbit_active_count | int) <= 0 else 'skip' }}"
+
+- name: "{{ guard_case.name }} — assert the verdict"
+  ansible.builtin.assert:
+    that:
+      - (qbit_active_count | int) == (guard_case.want_count | int)
+      - (guard_refused | bool) == (guard_case.want_refused | bool)
+    fail_msg: >-
+      {{ guard_case.name }}: count={{ qbit_active_count }},
+      refused={{ guard_refused }}; want count={{ guard_case.want_count }},
+      refused={{ guard_case.want_refused }}.
+    success_msg: >-
+      {{ guard_case.name }}: count={{ qbit_active_count }},
+      force={{ qbit_update_force }} -> {{ 'REFUSED' if guard_refused | bool
+                                          else 'updates' if (qbit_update_force | bool)
+                                                            or (qbit_active_count | int) == 0
+                                          else 'skipped' }}.
+      Old guard: {{ guard_old }}.

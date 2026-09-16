@@ -1,0 +1,48 @@
+# guard.yml — decide whether an update may proceed, from answers main.yml collected.
+#
+# Pure logic, no I/O, so tests/qbit-update-guard.yml can feed it recorded answers,
+# including the failures a live stack will not produce on demand. Same seam
+# roles/plex/tasks/guard.yml has had since PET-394 (PET-456).
+#
+# In:  qbit_ps            register of `docker compose ps -q --status running`
+#      qbit_active        register of the in-namespace torrents/info call
+#                         (skipped, so statusless, when the project is down)
+#      qbit_update_force  the override, from defaults
+# Out: qbit_active_count  >0 in flight | 0 clear to update | -1 cannot determine
+#      and a failed play when the count is -1 and force is unset
+---
+# -1 meant "could not determine" here before, which was the right idea —
+# and then `when: qbit_active_count | int <= 0` let -1 through as permission
+# to update. Having the third state is worthless unless something acts on it.
+#
+# A stopped stack is 0, not -1: nothing can be downloading when nothing is
+# running, and an update against a down stack is a normal thing to want.
+- name: qbit — resolve active download count
+  ansible.builtin.set_fact:
+    qbit_active_count: >-
+      {{ 0
+         if ((qbit_ps.rc | default(1)) == 0 and (qbit_ps.stdout | default('') | trim) == '')
+         else ((qbit_active.stdout | from_json | length)
+               if ((qbit_active.rc | default(1)) == 0
+                   and (qbit_active.stdout | default('') | trim).startswith('['))
+               else -1) }}
+
+- name: qbit — REFUSING to update, transfer state is unknown
+  ansible.builtin.fail:
+    msg: >-
+      Could not read the qBittorrent API (rc={{ qbit_active.rc | default('?') }},
+      answered "{{ (qbit_active.stdout | default('') | trim)[:60] }}{{ (qbit_active.stderr | default('') | trim)[:60] }}").
+      Refusing to update, because "cannot tell" is not "nothing is downloading".
+      Re-run with -e qbit_update_force=true to update anyway.
+  when:
+    - qbit_active_count | int < 0
+    - not (qbit_update_force | bool)
+
+- name: qbit — skip update, downloads in flight
+  ansible.builtin.debug:
+    msg: >-
+      SKIPPED: {{ qbit_active_count }} torrent(s) downloading.
+      Re-run with -e qbit_update_force=true to update anyway.
+  when:
+    - qbit_active_count | int > 0
+    - not (qbit_update_force | bool)

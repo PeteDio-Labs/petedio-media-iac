@@ -222,6 +222,50 @@ assumption, and the general rule is the one those earned: **a check that
 cannot fail loudly is not a check.** When a guard's whole job is to withhold
 permission, "unknown" must resolve to *no*, never to *yes*.
 
+## A guard is only testable if its decision has no I/O in it (found 2026-09-16)
+
+`ansible/tests/` holds recorded-answer tests for the three guards above, and the
+`ansible-tests` workflow runs every `tests/*.yml` on a GitHub-hosted runner for
+each pull request and each push to `main`. Every play sets `connection: local`
+and `become: false`, so the suite contacts no media host and needs no secret.
+
+To run it yourself:
+
+```sh
+cd ansible
+ansible-playbook -i inventory/hosts.yml tests/media-lifecycle-plex-probe.yml
+```
+
+**The seam is what makes the tests possible.** A guard splits into two files: one
+that collects answers and one that decides from them.
+
+| File | Contains | Example |
+|---|---|---|
+| the probe | every task that talks to a host | `roles/media-lifecycle/tasks/in-use-plex.yml` |
+| the classifier | `set_fact` only, no I/O | `roles/media-lifecycle/tasks/classify-plex.yml` |
+
+A test sets the registers the probe would have collected, includes the classifier,
+and asserts the verdict. That reaches the answers a live host never produces on
+demand: a 403, a refused connection, a 200 carrying the wrong document. **Those
+are the answers a guard exists for**, so a guard whose decision sits inline
+between two I/O tasks is untested by construction, however carefully it is
+written.
+
+Two working rules follow:
+
+- **Write the classification into its own file** when you add a guard. Put every
+  task that touches a host before the `include_tasks` that ends the probe, and
+  gate each one with an inline `when:` on a register.
+- **Set `check_mode: false` on every collecting task.** `ansible.builtin.uri`
+  does not support check mode, so without it a `--check` run skips the task, the
+  register carries no `status`, and the classifier correctly returns `unknown` —
+  which refuses the stop. A rehearsal that cannot rehearse the stop is not a
+  rehearsal.
+
+Per-case task lists live in `tests/cases/`, not beside the drivers.
+`ansible-playbook` on a task list fails with *playbook must be a list of plays*,
+and the CI job globs `tests/*.yml`.
+
 ## qBittorrent's WebUI cannot be reached from LXC 110's own host (found 2026-08-13)
 
 There is **no `WebUI\Password_PBKDF2` and no `WebUI\Username`** in `qBittorrent.conf`.

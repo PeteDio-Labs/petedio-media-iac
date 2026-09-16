@@ -22,6 +22,10 @@
 # applies — which is why the container's own healthcheck has been green all
 # along, running this exact request. Do NOT "fix" this by setting a password or
 # retrying the login; the failure was never the credential.
+#
+# This file COLLECTS the answers and nothing else. classify-qbittorrent-vpn.yml
+# turns them into media_in_use_state, and tests/media-lifecycle-qbit-probe.yml
+# feeds that file recorded answers (PET-456).
 ---
 # Ask the PROJECT what is running, not the named container. "No such container"
 # would otherwise be indistinguishable from "the stack is down" — so a renamed
@@ -35,73 +39,27 @@
   failed_when: false
   check_mode: false
 
-- name: qbit — classify the compose project
-  ansible.builtin.set_fact:
-    lifecycle_qbit_project_up: >-
-      {{ (lifecycle_qbit_ps.rc | default(1)) == 0
-         and (lifecycle_qbit_ps.stdout | default('') | trim) != '' }}
-    lifecycle_qbit_docker_ok: "{{ (lifecycle_qbit_ps.rc | default(1)) == 0 }}"
-
-# Docker itself did not answer. That is not "nothing is downloading".
-- name: qbit — record in-use state (cannot query docker)
-  ansible.builtin.set_fact:
-    media_in_use_state: unknown
-    media_in_use_reason: >-
-      could not query the compose project at {{ qbit_dir }}
-      (rc={{ lifecycle_qbit_ps.rc | default('?') }},
-      "{{ (lifecycle_qbit_ps.stderr | default('') | trim)[:80] }}")
-  when: not (lifecycle_qbit_docker_ok | bool)
-
-# Project genuinely down: nothing to guard, and nothing for the stop task to do.
-# This branch is what keeps re-running stack-down.yml idempotent rather than
-# erroring on "unknown" for a service that is legitimately already stopped.
-- name: qbit — record in-use state (compose project not running)
-  ansible.builtin.set_fact:
-    media_in_use_state: idle
-    media_in_use_reason: "the {{ qbit_dir }} compose project has no running services"
+# Gated on the register rather than on a derived fact, so classify-qbittorrent-vpn.yml
+# owns every derived value and a test can reach the classification with the two
+# registers alone.
+- name: qbit — count active downloads (in-namespace, no auth needed)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
+  register: lifecycle_qbit_active
   when:
-    - lifecycle_qbit_docker_ok | bool
-    - not (lifecycle_qbit_project_up | bool)
+    - (lifecycle_qbit_ps.rc | default(1)) == 0
+    - (lifecycle_qbit_ps.stdout | default('') | trim) != ''
+  changed_when: false
+  failed_when: false
+  check_mode: false
 
-- name: qbit — probe transfers while the project is up
-  when: lifecycle_qbit_project_up | bool
-  block:
-    - name: qbit — count active downloads (in-namespace, no auth needed)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - "{{ qbit_container }}"
-          - curl
-          - -sS
-          - --max-time
-          - "15"
-          - "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
-      register: lifecycle_qbit_active
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    # A JSON array is the ONLY answer that counts as having measured anything.
-    # "Forbidden" is a perfectly successful HTTP response as far as curl is
-    # concerned, so rc alone would not catch it — which is precisely how the old
-    # guard read an auth failure as "zero torrents downloading".
-    - name: qbit — did it actually answer with a torrent list?
-      ansible.builtin.set_fact:
-        lifecycle_qbit_ok: >-
-          {{ (lifecycle_qbit_active.rc | default(1)) == 0
-             and (lifecycle_qbit_active.stdout | default('') | trim).startswith('[') }}
-
-    - name: qbit — record in-use state
-      ansible.builtin.set_fact:
-        media_in_use_state: >-
-          {{ ('in-use' if ((lifecycle_qbit_active.stdout | from_json | length) > 0) else 'idle')
-             if (lifecycle_qbit_ok | bool) else 'unknown' }}
-        media_in_use_reason: >-
-          {{ ((lifecycle_qbit_active.stdout | from_json | length) ~ ' torrent(s) downloading')
-             if (lifecycle_qbit_ok | bool)
-             else ('the compose project is up but ' ~ qbit_container ~ ' did not return a torrent list'
-                   ~ ' (rc=' ~ (lifecycle_qbit_active.rc | default('?')) ~ ', answered: "'
-                   ~ ((lifecycle_qbit_active.stdout | default('') | trim)[:60])
-                   ~ ((lifecycle_qbit_active.stderr | default('') | trim)[:60])
-                   ~ '") — that is NOT a confirmation that nothing is downloading') }}
+- name: qbit — classify the probe
+  ansible.builtin.include_tasks: classify-qbittorrent-vpn.yml

@@ -54,7 +54,7 @@
         want: unknown
   tasks:
     - name: Classify each recorded answer
-      ansible.builtin.include_tasks: plex-update-guard-case.yml
+      ansible.builtin.include_tasks: cases/plex-update-guard-case.yml
       loop: "{{ guard_cases }}"
       loop_control:
         loop_var: guard_case

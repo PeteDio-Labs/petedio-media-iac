@@ -1,0 +1,53 @@
+# classify-plex.yml — turn the answers in-use-plex.yml collected into a verdict.
+# Pure logic, no I/O, so tests/media-lifecycle-plex-probe.yml can feed it recorded
+# answers — including the failures a live Plex will not produce on demand, which are
+# exactly the ones this guard exists for. Same seam roles/plex/tasks/guard.yml has
+# had since PET-394; this probe grew the classification inline instead, so nothing
+# could reach it without a running Plex (PET-456).
+#
+# In:  lifecycle_plex_unit      register of `systemctl is-active`
+#      lifecycle_plex_sessions  register of GET /status/sessions
+#                               (skipped, so statusless, when the unit is not active)
+# Out: media_in_use_state       idle | in-use | unknown
+#      media_in_use_reason      one line, for the refusal message and the report
+---
+- name: Plex — read the probe's inputs
+  ansible.builtin.set_fact:
+    lifecycle_plex_unit_state: "{{ lifecycle_plex_unit.stdout | default('') | trim }}"
+    lifecycle_plex_ok: "{{ (lifecycle_plex_sessions.status | default(-1)) | int == 200 }}"
+    # `or ['']` is load-bearing: with a capture group, regex_search returns a
+    # LIST on match and None on no-match, and `None | first` raises rather than
+    # yielding a value. Unreachable Plex -> empty content -> no match -> crash,
+    # which is how the ORIGINAL guard behaved too (it is what the bogus-port test
+    # hit). Convert the miss to a real value so the classification below can run.
+    lifecycle_plex_size: >-
+      {{ ((lifecycle_plex_sessions.content | default('')
+           | regex_search('size="(\d+)"', '\1')) or ['']) | first | trim }}
+
+# THREE outcomes, not two. "Plex did not answer" is not "nobody is watching" —
+# docs/GOTCHAS.md § "The in-use guards fail open".
+#
+# /status/sessions always carries size="N". Its ABSENCE on an otherwise-200 means
+# this is not the document that was asked for, which is 'unknown', not 'idle'.
+# Reading the count and the reachability separately is the whole fix: the old
+# one-liner could not tell "zero sessions" from "no answer".
+#
+# Not running is 'idle', not 'unknown': nothing can be playing when nothing is
+# serving, and that branch is what keeps re-running stack-down.yml idempotent
+# rather than refusing on a service that is legitimately already stopped.
+- name: Plex — record in-use state
+  ansible.builtin.set_fact:
+    media_in_use_state: >-
+      {{ 'idle' if lifecycle_plex_unit_state != 'active'
+         else 'unknown' if not ((lifecycle_plex_ok | bool) and lifecycle_plex_size != '')
+         else ('in-use' if (lifecycle_plex_size | int) > 0 else 'idle') }}
+    media_in_use_reason: >-
+      {{ (media_service_unit ~ ' is not running')
+         if lifecycle_plex_unit_state != 'active'
+         else ('could not read Plex sessions (HTTP '
+               ~ ('no response' if (lifecycle_plex_sessions.status | default(-1)) | int == -1
+                  else lifecycle_plex_sessions.status) ~ ', size='
+               ~ (lifecycle_plex_size if lifecycle_plex_size != '' else 'absent')
+               ~ ') — that is NOT a confirmation that nobody is watching')
+         if not ((lifecycle_plex_ok | bool) and lifecycle_plex_size != '')
+         else (lifecycle_plex_size ~ ' active playback session(s)') }}
