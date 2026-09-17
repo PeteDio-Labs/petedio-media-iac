@@ -174,9 +174,9 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
 sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; updates plex-gpu
 236 since PET-394) · `seerr` (build from source) ·
-`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**; `qbit_registry`
-still points every image at the `docker.pdlab.dev` Zot cache, which has been
-**down since 2026-09-03** — so the pull path is declared, not working, PET-389) ·
+`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**; each image
+addresses its own registry, `docker.io` or `lscr.io`, since PET-448 — the shared
+`docker.pdlab.dev` Zot prefix named a registry that died with pve01, PET-389) ·
 `media-lifecycle` (in-use guards + ordered stop/start).
 
 Playbooks: `check-updates.yml` (read-only report) · `update-media.yml` ·

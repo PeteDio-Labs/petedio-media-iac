@@ -44,8 +44,19 @@ remote_digest() {
   fi
   [[ "$path" == *":"* ]] && { tag="${path##*:}"; repo="${path%:*}"; } || repo="$path"
 
-  # Discover the auth realm, then take an anonymous pull token for this repo.
-  www=$(curl -sI -m 15 "https://${registry}/v2/" 2>/dev/null \
+  # Discover the auth realm from the MANIFEST endpoint's own 401, and fall back
+  # to /v2/ only if that names no realm.
+  #
+  # Asking /v2/ first is the obvious order and it is wrong for lscr.io, which is
+  # a redirector in front of ghcr.io: /v2/ answers 405 with no
+  # `www-authenticate` header at all, while the manifest request answers 401 and
+  # names realm="https://ghcr.io/token". Reading the realm from /v2/ therefore
+  # took no token for qBittorrent, sent the manifest request unauthenticated,
+  # got 401 back, and printed `unknown` on every run. That was read as lscr.io
+  # rate-limiting for months. It was not (PET-448).
+  www=$(curl -sI -m 15 "https://${registry}/v2/${repo}/manifests/${tag}" 2>/dev/null \
+        | tr -d '\r' | grep -i '^www-authenticate:' || true)
+  [ -n "$www" ] || www=$(curl -sI -m 15 "https://${registry}/v2/" 2>/dev/null \
         | tr -d '\r' | grep -i '^www-authenticate:' || true)
   realm=$(sed -n 's/.*realm="\([^"]*\)".*/\1/p' <<< "$www")
   service=$(sed -n 's/.*service="\([^"]*\)".*/\1/p' <<< "$www")

@@ -228,58 +228,10 @@
   changed_when: false
   check_mode: false
 
-# Each row is "<service> <image> <local> <remote>". Jinja has no "compare
-# element N to element M of the same row" filter, so the comparison is done as a
-# loop condition rather than a filter chain.
-- name: qbit — list images whose local digest differs from the registry
-  ansible.builtin.set_fact:
-    qbit_outdated_images: "{{ qbit_outdated_images | default([]) + [row[1]] }}"
-    qbit_outdated_services: "{{ qbit_outdated_services | default([]) + [row[0]] }}"
-  loop: "{{ qbit_digests.stdout_lines | map('split', ' ') | list }}"
-  loop_control:
-    loop_var: row
-    label: "{{ row[1] | default(row[0]) }}"
-  when:
-    - row | length == 4
-    - row[2] != 'none'
-    - row[3] != 'unknown'
-    - row[2] != row[3]
-
-# An image whose remote digest could not be resolved is NOT "up to date" — it is
-# unknown. Docker Hub rate-limits anonymous manifest requests (HTTP 429), and
-# without this distinction a rate-limited run reports a clean stack when it has
-# in fact checked nothing.
-- name: qbit — list images whose remote digest could not be resolved
-  ansible.builtin.set_fact:
-    qbit_unchecked_images: "{{ qbit_unchecked_images | default([]) + [row[1]] }}"
-  loop: "{{ qbit_digests.stdout_lines | map('split', ' ') | list }}"
-  loop_control:
-    loop_var: row
-    label: "{{ row[1] | default(row[0]) }}"
-  when:
-    - row | length == 4
-    - row[3] == 'unknown'
-
-# The table stays readable by reporting a count; the image names go in `note`,
-# which the report prints in full underneath.
-- name: qbit — record update report
-  ansible.builtin.set_fact:
-    media_update_report:
-      service: qbittorrent-vpn
-      mechanism: docker-compose
-      current: "{{ qbit_digests.stdout_lines | length }} images"
-      available: >-
-        {{ (qbit_outdated_images | default([]) | length ~ ' behind')
-           if (qbit_outdated_images | default([]) | length) > 0 else '' }}
-      update_available: "{{ (qbit_outdated_images | default([]) | length) > 0 }}"
-      note: >-
-        {{ [
-             (('behind: ' ~ (qbit_outdated_images | default([]) | join(', ')))
-              if (qbit_outdated_images | default([]) | length) > 0 else ''),
-             (('NOT CHECKED (registry unreachable / rate-limited): '
-               ~ (qbit_unchecked_images | default([]) | join(', ')))
-              if (qbit_unchecked_images | default([]) | length) > 0 else ''),
-           ] | reject('equalto', '') | join(' | ') }}
+# The verdict is its own file so the test suite can run it on recorded rows.
+# See tasks/digest-verdict.yml and tests/qbit-digest-verdict.yml.
+- name: qbit — decide what the digests mean
+  ansible.builtin.include_tasks: digest-verdict.yml
 
 # ------------------------------------------------------------------ upgrade --
 - name: qbit — apply update

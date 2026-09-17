@@ -20,26 +20,31 @@ qbit_health_retries: 30
 qbit_health_delay: 10
 
 # ------------------------------------------------------------------- images --
-# The two docker.io images are pulled through the homelab registry's
-# pull-through cache instead of Docker Hub directly. Anonymous Hub pulls are
-# capped at 100/6h per IP, and that cap has already aborted an update run on
-# this stack — the pull failed for gluetun and alpine (both docker.io) while the
-# image that actually needed updating sat on a different registry.
+# Each image is addressed at a registry that answers, and they deliberately do
+# not share a prefix: gluetun and alpine are Docker Hub, qbittorrent is lscr.io.
 #
-# The cache is on-demand: the first pull of a tag fetches from Hub and stores it,
-# later pulls are served locally. The `docker-hub/` prefix is zot's sync
-# destination, and note the `library/` segment — Docker's implicit namespace for
-# official images has to be spelled out once you address them by full path.
+# Until PET-448 all three resolved through the homelab Zot pull-through cache at
+# `docker.pdlab.dev`. registry-106 died with pve01 on 2026-09-03 and its blob
+# store went with pve02's rebuild, so it does not come back as it was (PET-389).
+# A prefix naming a registry that never answers is worse than no cache at all:
+# the digest check could not read one manifest, so `check-updates.yml` reported
+# qBittorrent and gluetun as nothing-to-do for as long as it ran, and any
+# recreate failed at the pull.
 #
-# qbittorrent goes through the cache too. lscr.io is not subject to the Hub cap,
-# but its burst limiter is aggressive enough that the digest check against it
-# intermittently returns nothing — reported honestly as NOT CHECKED, which means
-# a real qBittorrent update could sit unnoticed. Caching it makes the update
-# check deterministic rather than dependent on someone else's rate limiter.
-qbit_registry: "docker.pdlab.dev"
-qbit_image_gluetun: "{{ qbit_registry }}/docker-hub/qmcgaw/gluetun:latest"
-qbit_image_portsync: "{{ qbit_registry }}/docker-hub/library/alpine:3.20"
-qbit_image_qbittorrent: "{{ qbit_registry }}/lscr-io/linuxserver/qbittorrent:latest"
+# What the cache bought was insulation from Docker Hub's anonymous cap, 100
+# pulls per 6h per IP, which had already aborted an update run on this stack.
+# That cap applies again to the two docker.io images. Its handling is per image
+# and lives in `files/image-digests.sh`: an image whose manifest cannot be read
+# prints `unknown` and is never treated as current. PET-448 adds the other half
+# in `tasks/main.yml` — the role fails when NO image's digest could be read, so
+# a registry that is throttling or gone can no longer look like a clean stack.
+#
+# To put a cache back, give each image the new registry's prefix here. Do not
+# reintroduce one shared `qbit_registry` unless one registry really fronts all
+# three, because that is the shape that failed silently.
+qbit_image_gluetun: "qmcgaw/gluetun:latest"
+qbit_image_portsync: "alpine:3.20"
+qbit_image_qbittorrent: "lscr.io/linuxserver/qbittorrent:latest"
 
 # Pulling restarts the containers. qBittorrent resumes its torrents on restart,
 # so this is a courtesy rather than a data-safety gate — but interrupting an
