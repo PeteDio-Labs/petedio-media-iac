@@ -1,6 +1,11 @@
-# Read-only: report the current and available version of every media service.
-# Changes nothing (`media_update_apply: false`), so it is safe to run any time,
-# including on a schedule.
+# Report the current and available version of every media service. It upgrades
+# nothing (`media_update_apply: false`), but the roles still converge config, as
+# configure-media.yml does.
+#
+# On qbittorrent-vpn that includes rendering .env from Vault (PET-453). The render
+# needs an unsealed Vault and the `ansible` AppRole files, and Vault seals nightly.
+# To run without them, pass --skip-tags qbit_env. Before you schedule this
+# playbook, read RESTART HAZARD in roles/qbittorrent-vpn/tasks/main.yml.
 #
 #   cd ansible
 #   ansible-playbook -i inventory/hosts.yml playbooks/check-updates.yml
@@ -14,7 +19,7 @@
   tasks:
     - name: Report mode
       ansible.builtin.debug:
-        msg: "Read-only check. Nothing will be modified."
+        msg: "Version check. Nothing is upgraded."
 
 - ansible.builtin.import_playbook: media-roles.yml
   vars:

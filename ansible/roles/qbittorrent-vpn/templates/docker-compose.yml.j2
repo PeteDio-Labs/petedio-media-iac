@@ -11,8 +11,8 @@
 # this "LXC 120". Neither was true: that repo is gone and the container is 110, so the
 # file was in practice unmanaged. This template is now the source of truth.
 #
-# Secrets (${PROTON_*}, ${QBIT_WEBUI_PASSWORD}) still come from /opt/qbittorrent-vpn/.env
-# on the host, which is NOT rendered here and NOT committed — compose reads it at runtime.
+# Secrets (${PROTON_WG_*}) come from /opt/qbittorrent-vpn/.env, which compose reads at
+# runtime. tasks/env.yml renders that file from Vault, and git never holds it (PET-453).
 
 services:
   gluetun:
@@ -33,9 +33,9 @@ services:
       VPN_TYPE: wireguard
       WIREGUARD_PRIVATE_KEY: ${PROTON_WG_PRIVATE_KEY}
       WIREGUARD_ADDRESSES: ${PROTON_WG_ADDRESSES}
-      # Not a secret, so it comes from the role's defaults rather than the
-      # uncommitted .env — see proton_server_countries there for why the exit
-      # country matters and which countries have port forwarding.
+      # Not a secret, so it comes from the role's defaults rather than .env —
+      # see proton_server_countries there for why the exit country matters and
+      # which countries have port forwarding.
       SERVER_COUNTRIES: "{{ proton_server_countries }}"
       # NAT-PMP port forwarding (Plus tier required)
       VPN_PORT_FORWARDING: "on"
@@ -122,7 +122,12 @@ services:
         condition: service_started
     environment:
       QBIT_USER: admin
-      QBIT_PASSWORD: ${QBIT_WEBUI_PASSWORD}
+      # Empty on purpose: qBittorrent has no WebUI password. This sidecar shares
+      # gluetun's namespace and calls the WebUI at 127.0.0.1, which the auth
+      # allowlist admits. The QBIT_WEBUI_PASSWORD that .env held matched nothing.
+      # homelab-infra's port-sync.sh.j2 runs `set -eu`, so the variable must stay
+      # set, even when empty (PET-453).
+      QBIT_PASSWORD: ""
       SYNC_INTERVAL: "300"
     volumes:
       - /opt/qbittorrent-vpn/port-sync/port-sync.sh:/port-sync.sh:ro

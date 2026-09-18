@@ -5,6 +5,29 @@ qbit_dir: /opt/qbittorrent-vpn
 qbit_compose_file: /opt/qbittorrent-vpn/docker-compose.yml
 qbit_env_file: /opt/qbittorrent-vpn/.env
 
+# Where tasks/env.yml reads the two WireGuard values it writes to .env (PET-453).
+# The read runs on the controller, through the `vault` CLI, as the `ansible`
+# AppRole, whose policy reads kv/data/services/*. Each setting takes the env var
+# petedio-iac's deploy scripts take, so one shell serves both repos.
+qbit_vault_path: kv/services/media/qbittorrent
+qbit_vault_addr: "{{ lookup('ansible.builtin.env', 'VAULT_ADDR') | default('https://192.168.50.223:8200', true) }}"
+qbit_vault_cacert: >-
+  {{ lookup('ansible.builtin.env', 'VAULT_CACERT')
+     | default((role_path ~ '/../../../environments/media/vault-ca.crt') | realpath, true) }}
+# petedio-iac's docs/runbooks/vault-seed.md writes these two files to its
+# gitignored .secrets directory. The default assumes sibling clones, as in
+# ~/petedio.
+qbit_vault_secrets_dir: >-
+  {{ lookup('ansible.builtin.env', 'SECRETS_DIR')
+     | default((role_path ~ '/../../../../iac/.secrets') | realpath, true) }}
+qbit_vault_role_id_file: "{{ qbit_vault_secrets_dir }}/ansible.role_id"
+qbit_vault_secret_id_file: "{{ qbit_vault_secrets_dir }}/ansible.secret_id"
+
+# The .env render refuses unless gluetun already runs with the values Vault
+# holds, because any other value recreates gluetun and stops every transfer.
+# See tasks/env-verdict.yml.
+qbit_env_force: false
+
 # IN-CONTAINER url — reached with `docker exec {{ qbit_container }} curl …`, never
 # from the host. The WebUI is published through Docker, so a host-origin request
 # is SNAT'd to the bridge gateway and falls outside WebUI\AuthSubnetWhitelist;

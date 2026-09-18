@@ -1,8 +1,8 @@
 # Runbook — qBittorrent / Gluetun VPN secret in Vault
 
-**Status: seed still pending — but the secret set changed. Read § "What is actually
-secret" before seeding; the previously-specified contract included a credential that
-does not exist.**
+**Status: seeded (PET-452), and rendered into `.env` by the `qbittorrent-vpn` role
+(PET-453).** To change a value, see § "Rotate a value". A rotation recreates gluetun,
+so it waits for an idle stack.
 
 qbittorrent-vpn (LXC 110) runs qBittorrent behind Gluetun/Proton. Its `.env` is
 deliberately not committed, and its real secrets must live in Vault rather than in
@@ -10,14 +10,15 @@ this repo or in `ansible-vault`.
 
 ## What is actually secret (corrected 2026-08-13, measured on the host)
 
-`/opt/qbittorrent-vpn/.env` carries four keys:
+The hand-written `/opt/qbittorrent-vpn/.env` carried four keys. The role's render
+writes the first two from Vault and drops the other two:
 
 | Key | Secret? | Notes |
 |---|---|---|
-| `PROTON_WG_PRIVATE_KEY` | **yes** | The real one. Gluetun's WireGuard identity. |
-| `PROTON_WG_ADDRESSES` | **yes-ish** | Tunnel address; not a credential but pairs with the key and is not public. |
-| `PROTON_SERVER_COUNTRIES` | no | Plain config. **Moved to the role's defaults as `proton_server_countries` (PET-295)** — the compose template no longer reads it from `.env`. The key may still be present on the host; it is now inert. |
-| `QBIT_WEBUI_PASSWORD` | **no — it is a phantom** | See § `QBIT_WEBUI_PASSWORD` must NOT be seeded. |
+| `PROTON_WG_PRIVATE_KEY` | **yes** | The real one. Gluetun's WireGuard identity. Vault field `wireguard_private_key`. |
+| `PROTON_WG_ADDRESSES` | **yes-ish** | Tunnel address; not a credential but pairs with the key and is not public. Vault field `wireguard_addresses`. |
+| `PROTON_SERVER_COUNTRIES` | no | Plain config. **Moved to the role's defaults as `proton_server_countries` (PET-295)**, where the compose template reads it. The render drops the key. |
+| `QBIT_WEBUI_PASSWORD` | **no — it is a phantom** | See § `QBIT_WEBUI_PASSWORD` must NOT be seeded. The render drops the key. |
 
 ### `QBIT_WEBUI_PASSWORD` must NOT be seeded
 
@@ -45,66 +46,68 @@ therefore allowlisted — that is what `roles/media-lifecycle` and
 
 If a real WebUI password is ever wanted, that is a **deliberate config change** to
 qBittorrent (set `WebUI\Password_PBKDF2`), and only then is there something worth
-storing. Removing the dead key from `.env` is worth doing at the same time.
+storing. That change also needs the compose template's port-sync service, whose
+`QBIT_PASSWORD` is empty on purpose (PET-453).
 
 ## Path collision — RESOLVED 2026-08-13 (read against live Vault)
 
 Two paths existed for the same thing. Both were inspected once Vault was unsealed:
 
-| Path | Actually contains | Consumers |
+| Path | Contained on 2026-08-13 | Consumers on 2026-08-13 |
 |---|---|---|
 | `kv/services/qbittorrent` | `username`, `password` — **and nothing else** | `iac/scripts/vault-seed.sh`, `vault-verify.sh` |
 | `kv/services/media/qbittorrent` | **empty** | none |
 
-That settles it, and the answer is better than "pick one":
+That settled it, and the answer was better than "pick one":
 
-- **The seeded path holds only the phantom pair.** `username` + `password` are the
+- **The seeded path held only the phantom pair.** `username` + `password` were the
   values `iac`'s seed migrated out of the retired homelab-infra
   `qbittorrent.vault.yml` — the credential that matches nothing, because qBittorrent
-  has no WebUI password configured. There is no Proton key there. So
-  `kv/services/qbittorrent` contains **no secret worth keeping.**
-- **The Proton WireGuard key is not in Vault at all.** It exists only in
+  has no WebUI password configured. There was no Proton key there. So
+  `kv/services/qbittorrent` contained **no secret worth keeping.**
+- **The Proton WireGuard key was not in Vault at all.** Its only copy was
   `/opt/qbittorrent-vpn/.env` on 110. The "seed pending" state was therefore real —
   it was just pending for a different secret than this runbook named.
 
-**Actions:**
+**Actions.** All three are done:
 
-1. Seed `kv/services/media/qbittorrent` with the Proton key + addresses (below).
-   Source them from the live `.env` on 110; that is the only copy, which
-   is its own reason to get this done.
-2. Delete `kv/services/qbittorrent` — it holds only the dead credential.
-3. Drop the qBittorrent block from `iac/scripts/vault-seed.sh` (and `vault-verify.sh`)
-   so the retired name stops being re-created. That is a `petedio-iac` change.
-
-Until step 3 lands, re-running `vault-seed.sh` will recreate the dead path.
+1. PET-452 seeded `kv/services/media/qbittorrent` with the Proton key and addresses
+   from the live `.env` on 110, using petedio-iac's `scripts/seed-qbittorrent-vault.sh`.
+2. The same script's `--retire-old` deleted `kv/services/qbittorrent`, which held
+   only the dead credential.
+3. petedio-iac's `vault-seed.sh` no longer writes the retired path, and
+   `vault-verify.sh` checks both fields at `kv/services/media/qbittorrent`.
 
 ## The contract
 
 - **Path:** `kv/services/media/qbittorrent`
-  - `wireguard_private_key`
-  - `wireguard_addresses`
-- **Reader:** the existing **`ansible`** Vault policy already grants
-  `path "kv/data/services/*" { capabilities = ["read"] }`, so the media Ansible run
-  can read this path as soon as it is seeded — no policy change needed for read.
-  (Verified: `vault token capabilities kv/data/services/media/qbittorrent` → `read`
-  with the `ansible` AppRole.)
+  - `wireguard_private_key`: 44 characters of base64, ending in `=`
+  - `wireguard_addresses`: the tunnel's addresses in CIDR form, comma-separated,
+    with no surrounding space
+  - The render refuses any other shape. `tasks/env-verdict.yml` holds the checks.
+- **Reader:** `roles/qbittorrent-vpn/tasks/env.yml`, on the controller, as the
+  **`ansible`** AppRole. Its policy grants
+  `path "kv/data/services/*" { capabilities = ["read"] }`, so the read needed no
+  policy change. (Verified: `vault token capabilities kv/data/services/media/qbittorrent`
+  → `read` with the `ansible` AppRole.)
 - **Isolation:** media-only secrets under `services/*`, not readable by the
   `terraform`/`ci-read`/`colatro-ci` poker paths. Do not widen a policy to reach
   them — `services/*` read is the right scope.
 
 ## Seed (privileged — Vault admin/root token, not an AppRole)
 
-Run `petedio-iac`'s `scripts/seed-qbittorrent-vault.sh`. It prompts for both
-values silently, or takes them from `WIREGUARD_PRIVATE_KEY` and
-`WIREGUARD_ADDRESSES`, writes the path, reads it back to prove the write, and
-retires the stale `kv/services/qbittorrent` under `--retire-old`.
+To rotate a value, or to seed a rebuilt Vault, run `petedio-iac`'s
+`scripts/seed-qbittorrent-vault.sh`. It prompts for both values silently, or takes
+them from `WIREGUARD_PRIVATE_KEY` and `WIREGUARD_ADDRESSES`, writes the path, and
+reads it back to prove the write. Its `--retire-old` flag deleted the stale
+`kv/services/qbittorrent` under PET-452, so a later run doesn't need it.
 
 ```bash
 export VAULT_ADDR=https://192.168.50.223:8200
 export VAULT_CACERT=/path/to/vault-ca.crt
 vault login                             # the AppRoles can only READ services/*
 
-cd ~/petedio/iac && ./scripts/seed-qbittorrent-vault.sh --retire-old
+cd ~/petedio/iac && ./scripts/seed-qbittorrent-vault.sh
 ```
 
 > [!warning] Do not seed this by hand with `vault kv put key='value'`
@@ -118,18 +121,81 @@ Note the absence of `qbit_password`. That is deliberate — see § `QBIT_WEBUI_P
 
 ## Consume
 
-The `qbittorrent-vpn` role **exists** (it renders `docker-compose.yml.j2` and
-addresses each image at a registry that answers, PET-448), but `.env` is still
-unmanaged: it is the one file the role does not render, precisely because these
-values are not in Vault yet. Seeding closes that gap and lets the role template
-`.env` like everything else.
+`roles/qbittorrent-vpn/tasks/env.yml` writes `.env` on every run of the role, before
+the compose render reads the file. `configure-media.yml`, `check-updates.yml` and
+`update-media.yml` all run the role. `media-updates.yml` never does, because none of
+its targets is qbittorrent-vpn.
 
-```yaml
-- name: Read qBittorrent/Gluetun secrets from Vault
-  ansible.builtin.set_fact:
-    qbit: "{{ lookup('community.hashi_vault.vault_kv2_get',
-                     'services/media/qbittorrent', engine_mount_point='kv') }}"
-  no_log: true
-```
+Each run takes four steps:
 
-Use the `ansible` AppRole token (`services/*` read) for that lookup.
+1. **Log in.** The `vault` CLI on the controller logs in as the `ansible` AppRole,
+   with the `ansible.role_id` and `ansible.secret_id` files that petedio-iac's
+   `docs/runbooks/vault-seed.md` writes to `iac/.secrets`.
+2. **Read.** The CLI reads `kv/services/media/qbittorrent`. The credentials and the
+   token reach the CLI on stdin, so none of them lands on an argv or in `-vvv` output.
+   The login and the read both run the CLI with `VAULT_TOKEN` empty, `HOME` set to
+   `/var/empty` and `VAULT_CONFIG_PATH` set to `/dev/null`. The CLI then finds no
+   token of its own to send, such as a root token in the Mac's `~/.vault-token`.
+3. **Judge.** `tasks/env-verdict.yml` checks the shape of both values, then compares
+   them with the values gluetun runs with, from `docker inspect gluetun` on 110.
+4. **Render.** `.env` gets the two keys, owned by root with mode `0600`. The task
+   shows no diff and keeps no backup, because either would copy the key.
+
+The role reads Vault through the CLI, not `community.hashi_vault`. That collection
+needs the `hvac` library inside Ansible's Python, and Homebrew's Ansible doesn't ship
+it.
+
+### The verdict
+
+Compose recreates gluetun when its resolved config changes, and qBittorrent restarts
+with it. So the render restarts nothing only when gluetun runs with the values Vault
+holds.
+
+| Verdict | Meaning | The render |
+|---|---|---|
+| `same` | gluetun runs with both values Vault holds. | Writes `.env`. |
+| `differs` | Vault holds a value gluetun doesn't run with. | Refuses. |
+| `unknown` | `docker inspect gluetun` failed or printed no list. | Refuses. |
+
+A malformed value refuses under every verdict, and `qbit_env_force` doesn't lift that
+refusal. Under `--check`, the login, the read and the verdict run for real, and only
+the write is skipped.
+
+### Settings
+
+| To | Do this |
+|---|---|
+| Converge while Vault is sealed | Pass `--skip-tags qbit_env`. The compose render then reads the `.env` on the host. |
+| Read the AppRole files from another directory | Set `SECRETS_DIR`. The default is `iac/.secrets` in the clone beside this one. |
+| Use another Vault | Set `VAULT_ADDR`. Set `VAULT_CACERT` as well when its CA isn't `environments/media/vault-ca.crt`. |
+| Write a value gluetun doesn't run with | Pass `-e qbit_env_force=true`, with the stack idle. |
+
+### Rotate a value
+
+A rotation recreates gluetun, which stops every transfer. Run these steps from
+`ansible/`:
+
+1. Seed the new values, as in § "Seed".
+2. On 110, check that nothing is downloading. The command prints `[]` when nothing is:
+
+   ```bash
+   docker exec qbittorrent curl -fsS 'http://localhost:8080/api/v2/torrents/info?filter=downloading'
+   ```
+
+3. Dry-run the converge. Expect the verdict `differs` and a refusal:
+
+   ```bash
+   ansible-playbook playbooks/configure-media.yml --limit qbittorrent-vpn --check
+   ```
+
+4. Converge with the override:
+
+   ```bash
+   ansible-playbook playbooks/configure-media.yml --limit qbittorrent-vpn -e qbit_env_force=true
+   ```
+
+5. Check the tunnel. The run ends with `VPN OK`:
+
+   ```bash
+   ansible-playbook playbooks/stack-up.yml --limit qbittorrent-vpn
+   ```

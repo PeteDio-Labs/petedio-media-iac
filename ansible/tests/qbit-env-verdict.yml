@@ -1,0 +1,178 @@
+# Regression test for roles/qbittorrent-vpn/tasks/env-verdict.yml, the check that
+# decides whether tasks/env.yml may write .env from Vault (PET-453).
+#
+#   cd ansible
+#   ansible-playbook tests/qbit-env-verdict.yml
+#
+# Runs on localhost and touches nothing. It feeds the verdict recorded answers
+# from Vault and `docker inspect`, then asserts three things: whether the render
+# was refused, which verdict it reached, and that no message repeats a value.
+#
+# Expect twelve 'fatal' lines and rescued=12 in the recap. Each is a refusal,
+# caught so the test can assert it rather than end the run.
+#
+# WHAT IT EXISTS TO CATCH. A render restarts nothing only when gluetun already
+# runs with the values Vault holds. Any other value recreates gluetun and stops
+# every transfer, and a malformed value brings the tunnel up routing nothing.
+# Every key and address below is a dummy.
+- name: qBittorrent .env verdict — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    env_cases:
+      - name: gluetun runs with the values Vault holds
+        vault: &vault_good
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: 10.2.0.2/32
+        inspect: &inspect_same
+          rc: 0
+          stdout: >-
+            ["WIREGUARD_PRIVATE_KEY=PET453dummyWireGuardKeyNotARealSecret000000=",
+            "WIREGUARD_ADDRESSES=10.2.0.2/32", "VPN_TYPE=wireguard", "TZ=America/Los_Angeles"]
+          stderr: ""
+        want_refused: false
+        want_verdict: same
+
+      # A key rotated in Vault and not yet in gluetun.
+      - name: Vault holds a key gluetun does not run with
+        vault:
+          wireguard_private_key: PET453otherWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: 10.2.0.2/32
+        inspect: *inspect_same
+        want_refused: true
+        want_verdict: differs
+        want_msg_has: the verdict is differs
+
+      - name: Vault holds addresses gluetun does not run with
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: 10.2.0.3/32
+        inspect: *inspect_same
+        want_refused: true
+        want_verdict: differs
+
+      # Nothing says what a render would change, so it refuses as if it changed
+      # everything.
+      - name: gluetun cannot be inspected
+        vault: *vault_good
+        inspect:
+          rc: 1
+          stdout: ""
+          stderr: "Error: No such object: gluetun"
+        want_refused: true
+        want_verdict: unknown
+        want_msg_has: the verdict is unknown
+
+      - name: docker inspect exits 0 and prints null
+        vault: *vault_good
+        inspect:
+          rc: 0
+          stdout: "null"
+          stderr: ""
+        want_refused: true
+        want_verdict: unknown
+
+      # The shape checks run before the comparison, so a malformed value refuses
+      # even when gluetun runs with it.
+      - name: the key is one character short
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret00000=
+          wireguard_addresses: 10.2.0.2/32
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: "wireguard_private_key: not 44 characters of base64 ending in = (43 characters)"
+
+      # `match` lets `$` match before a trailing newline, so only the length test
+      # refuses this one. Remove that test and this case fails.
+      - name: the key ends in a newline
+        vault:
+          wireguard_private_key: "PET453dummyWireGuardKeyNotARealSecret000000=\n"
+          wireguard_addresses: 10.2.0.2/32
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: (45 characters)
+
+      - name: the addresses hold a quote
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: '10.2.0.2/32"'
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: "wireguard_addresses: empty, padded, or holding characters no CIDR list contains (12 characters)"
+
+      # The character class allows a space, for a list like `a/32, b/128`. Only
+      # the trim test refuses a trailing one, which compose would keep.
+      - name: the addresses end in a space
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: "10.2.0.2/32 "
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: (12 characters)
+
+      - name: the addresses are empty
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: ""
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: (0 characters)
+
+      - name: Vault holds no addresses
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret000000=
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: "wireguard_addresses: missing"
+
+      # An empty secret: env.yml reads `.data.data` as {}.
+      - name: Vault holds neither value
+        vault: {}
+        inspect: *inspect_same
+        want_refused: true
+        want_msg_has: "wireguard_private_key: missing; wireguard_addresses: missing"
+
+      # The override lifts the verdict's refusal and nothing else. It arrives as
+      # the string "true" from -e qbit_env_force=true.
+      - name: forced, with a key gluetun does not run with
+        vault:
+          wireguard_private_key: PET453otherWireGuardKeyNotARealSecret000000=
+          wireguard_addresses: 10.2.0.2/32
+        inspect: *inspect_same
+        force: "true"
+        want_refused: false
+        want_verdict: differs
+
+      - name: forced, with a key one character short
+        vault:
+          wireguard_private_key: PET453dummyWireGuardKeyNotARealSecret00000=
+          wireguard_addresses: 10.2.0.2/32
+        inspect: *inspect_same
+        force: "true"
+        want_refused: true
+        want_msg_has: "wireguard_private_key: not 44 characters"
+  tasks:
+    # Runs first: a template lookup's vars rank below set_fact, which the cases use.
+    - name: env.j2 writes exactly the two keys gluetun reads
+      vars:
+        rendered: >-
+          {{ lookup('ansible.builtin.template',
+                    playbook_dir ~ '/../roles/qbittorrent-vpn/templates/env.j2',
+                    template_vars={'qbit_wg': {
+                      'wireguard_private_key': 'PET453dummyWireGuardKeyNotARealSecret000000=',
+                      'wireguard_addresses': '10.2.0.2/32'}}) }}
+      ansible.builtin.assert:
+        that:
+          - rendered.splitlines() == ['PROTON_WG_PRIVATE_KEY=PET453dummyWireGuardKeyNotARealSecret000000=',
+                                      'PROTON_WG_ADDRESSES=10.2.0.2/32']
+        fail_msg: "env.j2 rendered {{ rendered | to_json }}"
+        success_msg: "env.j2 rendered {{ rendered.splitlines() | map('regex_replace', '=.*$', '=…') | list }}"
+
+    - name: Judge each recorded answer
+      ansible.builtin.include_tasks: cases/qbit-env-verdict-case.yml
+      loop: "{{ env_cases }}"
+      loop_control:
+        loop_var: env_case
+        label: "{{ env_case.name }}"

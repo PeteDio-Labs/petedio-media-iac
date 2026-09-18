@@ -1,0 +1,91 @@
+# env-verdict.yml — decide whether .env may be rendered, from answers env.yml collected.
+#
+# Pure logic, no I/O, so tests/qbit-env-verdict.yml can feed it recorded answers,
+# including a malformed secret and a gluetun that cannot be read. Same seam as
+# guard.yml (PET-453).
+#
+# In:  qbit_wg            the data Vault holds at qbit_vault_path
+#      qbit_gluetun_env   register of `docker inspect` for gluetun's .Config.Env
+#      qbit_env_force     the override, from defaults
+# Out: qbit_env_verdict   same | differs | unknown
+#      and a failed play when a value is malformed, or when the verdict is not
+#      `same` and force is unset
+#
+# Every task that reads a value sets no_log. A message names a field, a length or
+# a verdict, never a value.
+---
+# A WireGuard private key is 32 bytes of base64: 44 characters ending in `=`. The
+# length test is not redundant. `match` treats `$` as matching before a trailing
+# newline, and a newline inside .env ends the value early. The addresses get the
+# character class seed-qbittorrent-vault.sh checks, plus no surrounding space,
+# because compose keeps a dotenv value's trailing space.
+- name: qbit env — check the shape of the values Vault holds
+  vars:
+    _key: "{{ qbit_wg.wireguard_private_key | default(none) }}"
+    _addr: "{{ qbit_wg.wireguard_addresses | default(none) }}"
+  ansible.builtin.set_fact:
+    qbit_env_shape_errors: >-
+      {{ ([] if (_key is string and _key | length == 44
+                 and _key is match('^[A-Za-z0-9+/]{43}=$'))
+          else ['wireguard_private_key: '
+                ~ ('missing' if _key is none
+                   else 'not 44 characters of base64 ending in = ('
+                        ~ (_key | string | length) ~ ' characters)')])
+         + ([] if (_addr is string and _addr | length > 0 and _addr == _addr | trim
+                   and _addr is match('^[0-9a-fA-F:./, ]+$'))
+            else ['wireguard_addresses: '
+                  ~ ('missing' if _addr is none
+                     else 'empty, padded, or holding characters no CIDR list contains ('
+                          ~ (_addr | string | length) ~ ' characters)')]) }}
+  no_log: true
+
+- name: qbit env — REFUSING to render .env, Vault holds a malformed value
+  ansible.builtin.fail:
+    msg: >-
+      {{ qbit_vault_path | default('kv/services/media/qbittorrent') }} holds
+      {{ qbit_env_shape_errors | join('; ') }}. Writing that to .env would bring
+      gluetun up with a tunnel that routes nothing. Re-seed it with petedio-iac's
+      scripts/seed-qbittorrent-vault.sh, which checks the same shapes.
+  when: qbit_env_shape_errors | length > 0
+
+# Compose recreates a service when its resolved config changes, and recreating
+# gluetun restarts qBittorrent inside gluetun's namespace. So the render restarts
+# nothing exactly when gluetun already runs with both values. Compare with the
+# running container, not the file on disk: the container is what compose diffs.
+- name: qbit env — compare Vault's values with the ones gluetun runs with
+  ansible.builtin.set_fact:
+    qbit_env_verdict: >-
+      {{ 'unknown'
+         if ((qbit_gluetun_env.rc | default(1)) != 0
+             or not (qbit_gluetun_env.stdout | default('') | trim).startswith('['))
+         else ('same'
+               if (['WIREGUARD_PRIVATE_KEY=' ~ qbit_wg.wireguard_private_key,
+                    'WIREGUARD_ADDRESSES=' ~ qbit_wg.wireguard_addresses]
+                   | difference(qbit_gluetun_env.stdout | from_json) | length) == 0
+               else 'differs') }}
+  no_log: true
+
+# Each verdict is named. An unrecognized one fails the lookup, so a fourth state
+# cannot pass as any of these three.
+- name: qbit env — report the verdict
+  ansible.builtin.debug:
+    msg: >-
+      {{ {'same': 'gluetun runs with the values Vault holds, so rendering .env restarts nothing.',
+          'differs': 'gluetun runs with values that differ from Vault, so rendering .env recreates gluetun and stops every transfer.',
+          'unknown': 'Could not read the values gluetun runs with (rc=' ~ (qbit_gluetun_env.rc | default('?')) ~ ', '
+                     ~ ((qbit_gluetun_env.stderr | default('') | trim | truncate(120)) or 'stdout held no JSON list')
+                     ~ '), so a render may recreate gluetun.'}[qbit_env_verdict] }}
+
+# Refuses under --check as well, so a dry run shows what the real run would do.
+- name: qbit env — REFUSING to render .env, gluetun would restart or cannot be read
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to render {{ qbit_env_file | default('.env') }}: the verdict is
+      {{ qbit_env_verdict }}, and a render under that verdict can recreate gluetun,
+      which stops every transfer. To render anyway, check that nothing is
+      downloading, then re-run with -e qbit_env_force=true. On the host, `docker exec
+      qbittorrent curl -fsS 'http://localhost:8080/api/v2/torrents/info?filter=downloading'`
+      prints [] when nothing is.
+  when:
+    - qbit_env_verdict != 'same'
+    - not (qbit_env_force | bool)

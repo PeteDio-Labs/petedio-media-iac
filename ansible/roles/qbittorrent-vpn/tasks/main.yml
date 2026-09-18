@@ -1,17 +1,13 @@
 # qbittorrent-vpn — the compose stack on LXC 110.
 #
-# PROVENANCE NOTE: the compose file's header claims "Managed by Ansible — Source:
-# infrastructure/ansible/templates/qbittorrent-vpn/docker-compose.yml.j2" and
-# refers to "LXC 120". Neither is true any more: that template lived in the
-# retired homelab-infra repo (it is in no current clone) and the container is
-# 110. So the file on disk is, in practice, unmanaged. This role captures the
-# stack's *runtime* contract (services up, images current) without rewriting the
-# compose file — templating it here would mean pulling the Proton WireGuard key
-# and the qBit WebUI password into this repo's Vault scope first, which is its
-# own piece of work. Tracked as follow-up; see README.
+# The role renders both files compose reads: docker-compose.yml from
+# templates/docker-compose.yml.j2, and .env from Vault through tasks/env.yml
+# (PET-453). The retired homelab-infra repo wrote the compose file the role first
+# replaced, and docker-compose.yml.pre-ansible keeps that copy.
 #
-# Secrets: the WebUI password is read from the host's .env at runtime and never
-# leaves the container or lands in a log. .env itself is NOT committed.
+# Secrets: .env holds the Proton WireGuard key and addresses from
+# kv/services/media/qbittorrent. It is mode 0600 and never committed, and
+# tasks/env.yml never logs it. qBittorrent has no WebUI password.
 ---
 - name: qbit — compose file present
   ansible.builtin.stat:
@@ -36,6 +32,14 @@
     force: false
     mode: "0644"
 
+# --------------------------------------------------------------------- .env --
+# Vault holds the two WireGuard values, and env.yml writes them to .env before the
+# compose render reads it. It refuses when the write would recreate gluetun. To
+# converge while Vault is sealed, skip it with --skip-tags qbit_env.
+- name: qbit — render .env from Vault
+  ansible.builtin.import_tasks: env.yml
+  tags: [qbit_env]
+
 # ------------------------------------------------------- RESTART HAZARD -----
 # These two tasks recreate gluetun whenever the rendered compose file changes,
 # and qbittorrent + port-sync share gluetun's network namespace
@@ -47,12 +51,14 @@
 # inside the update block further down. It does NOT cover these two tasks. Any
 # change to gluetun's environment — the exit country (`proton_server_countries`,
 # PET-295), the image tag, a port — takes effect on the next converge, guarded by
-# nothing.
+# nothing. The WireGuard key and addresses are the exception: tasks/env.yml
+# refuses to write a value gluetun does not run with, unless you set
+# qbit_env_force (PET-453).
 #
-# The trap: `ansible/playbooks/check-updates.yml` bills itself as "read-only,
-# changes nothing, safe to run any time, including on a schedule" and imports
-# this same role body. It is only read-only while the rendered compose file
-# matches the running stack.
+# The trap: `ansible/playbooks/check-updates.yml` sounds like a version report, and
+# until PET-453 its header called it read-only and safe on a schedule. It imports
+# this same role body, so it is only read-only while the rendered compose file and
+# .env match the running stack.
 #
 # So: after changing anything gluetun reads, converge deliberately with the
 # stack idle. Check first, from the host:
@@ -240,8 +246,9 @@
     - (qbit_outdated_images | default([]) | length) > 0
   block:
     # Same guard, same fix, same reason as roles/media-lifecycle's — the WebUI is
-    # only reachable from INSIDE the netns. There is no WebUI password (the .env
-    # value matches nothing and five tries earn an hour-long IP ban), and a
+    # only reachable from INSIDE the netns. There is no WebUI password (the
+    # QBIT_WEBUI_PASSWORD that .env held until PET-453 matched nothing, and five
+    # tries earn an hour-long IP ban), and a
     # host-origin request is SNAT'd to the bridge gateway, outside
     # WebUI\AuthSubnetWhitelist. See docs/GOTCHAS.md.
     - name: qbit — is anything in the compose project running?
