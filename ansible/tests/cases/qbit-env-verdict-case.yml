@@ -1,0 +1,54 @@
+# One case for tests/qbit-env-verdict.yml. Included once per recorded answer.
+---
+# A value left over from the previous case would let this one pass for the wrong
+# reason, so reset every input and output the verdict touches.
+- name: "{{ env_case.name }} — load the recorded answers"
+  ansible.builtin.set_fact:
+    qbit_wg: "{{ env_case.vault }}"
+    qbit_gluetun_env: "{{ env_case.inspect }}"
+    qbit_env_force: "{{ env_case.force | default(false) }}"
+    qbit_env_shape_errors: []
+    qbit_env_verdict: ""
+    verdict_failed: false
+    failed_msg: ""
+
+# The refusal is a failed play, not a returned value, so the case catches it to
+# assert on it. rescue: fires for a failure inside a dynamic include.
+- name: "{{ env_case.name }} — run the verdict"
+  block:
+    - name: "{{ env_case.name }} — judge"
+      ansible.builtin.include_tasks: ../../roles/qbittorrent-vpn/tasks/env-verdict.yml
+  rescue:
+    - name: "{{ env_case.name }} — the verdict refused"
+      ansible.builtin.set_fact:
+        verdict_failed: true
+        failed_msg: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: "{{ env_case.name }} — assert the refusal and the verdict"
+  ansible.builtin.assert:
+    that:
+      - (verdict_failed | bool) == (env_case.want_refused | bool)
+      - env_case.want_verdict is not defined or qbit_env_verdict == env_case.want_verdict
+      - env_case.want_msg_has is not defined or env_case.want_msg_has in failed_msg
+    fail_msg: >-
+      {{ env_case.name }}: refused={{ verdict_failed }},
+      verdict={{ qbit_env_verdict | to_json }}, message={{ failed_msg | to_json }};
+      want refused={{ env_case.want_refused }},
+      verdict={{ env_case.want_verdict | default('any') }},
+      message containing {{ env_case.want_msg_has | default('anything') | to_json }}.
+    success_msg: >-
+      {{ env_case.name }}: {{ 'REFUSED' if verdict_failed | bool else 'rendered' }},
+      verdict={{ qbit_env_verdict | default('', true) or 'not reached' }}.
+
+# A message names a field, a length or a verdict, never a value. Values of five
+# characters or fewer are skipped, because they match ordinary words.
+- name: "{{ env_case.name }} — assert no message repeats a value"
+  ansible.builtin.assert:
+    that:
+      - >-
+        env_case.vault | dict2items | map(attribute='value') | map('trim')
+        | select('match', '(?s).{6}')
+        | select('in', failed_msg ~ ' ' ~ (qbit_env_shape_errors | join(' ')))
+        | list | length == 0
+    fail_msg: "{{ env_case.name }}: a refusal message repeats a value Vault holds."
+    quiet: true

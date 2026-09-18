@@ -12,6 +12,10 @@
 #
 # The per-app roles (servarr / plex / seerr / qbittorrent-vpn) replaced the
 # single-host `prowlarr` role that scoped the first idempotent pass.
+#
+# On qbittorrent-vpn the role renders .env from Vault (PET-453). That needs an
+# unsealed Vault and the `ansible` AppRole files. To converge without them, pass
+# --skip-tags qbit_env.
 ---
 - ansible.builtin.import_playbook: media-roles.yml
   vars:

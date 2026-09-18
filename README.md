@@ -142,12 +142,16 @@ from `roles/qbittorrent-vpn/templates/docker-compose.yml.j2`, replacing the
 runtime-only file whose header still credited the retired `homelab-infra` repo (and
 called the container "LXC 120" — it is 110).
 
-**Still unmanaged: `/opt/qbittorrent-vpn/.env`** (Proton WireGuard key, qBit WebUI
-password) and `port-sync/port-sync.sh`, which the compose file mounts from the host.
-Bringing the `.env` in means first seeding those secrets into this repo's Vault scope
-— see `docs/runbooks/qbittorrent-vault-secret.md`.
+**Rendered from Vault: `/opt/qbittorrent-vpn/.env` (PET-453).** The role's
+`tasks/env.yml` reads the Proton WireGuard key and addresses from
+`kv/services/media/qbittorrent` and writes them as the file's only two keys. It
+refuses when the write would recreate gluetun. See
+`docs/runbooks/qbittorrent-vault-secret.md`.
 
-> ⚠ **`QBIT_WEBUI_PASSWORD` in that `.env` is a phantom** (found 2026-08-13):
+**Still unmanaged: `port-sync/port-sync.sh`,** which the compose file mounts from the
+host.
+
+> ⚠ **`QBIT_WEBUI_PASSWORD`, which `.env` held until PET-453, is a phantom** (found 2026-08-13):
 > qBittorrent has no WebUI password configured at all, so nothing matches it and a
 > login with it can only ever fail — five failures ban the source IP for an hour.
 > Access control is the subnet allowlist, and that allowlist **cannot be reached from

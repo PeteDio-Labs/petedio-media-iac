@@ -51,26 +51,39 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   `media/terraform.tfstate`), and `terraform state list` on petedio-iac returns no
   media VMID in 100-110. There was no old side left to `state rm`. This is what
   unblocked `MEDIA_APPLY_ENABLED=true`.
-- **VPN secrets go to Vault, not code** — but the secret set is smaller than it
+- **VPN secrets live in Vault, not code** — but the secret set is smaller than it
   looks. Only the **Proton WireGuard key + addresses** belong in
-  `kv/services/media/qbittorrent`. `QBIT_WEBUI_PASSWORD` from `.env` must **not** be
-  seeded: qBittorrent has no WebUI password configured at all (0 hits for both
+  `kv/services/media/qbittorrent`. The `QBIT_WEBUI_PASSWORD` that `.env` held must
+  **not** be seeded: qBittorrent has no WebUI password configured at all (0 hits for both
   `WebUI\Password` and `WebUI\Username` in `qBittorrent.conf`), so it is a phantom
   that matches nothing and only earns hour-long IP bans. Seeding it would give a
   non-credential the appearance of a credential.
-  The existing **`ansible`** policy already grants `kv/data/services/* read`, so no
-  policy change is needed to consume it — only a privileged **seed** (Vault admin
-  token; the AppRoles can only read `services/*`). Never commit them; never widen a
-  policy beyond `services/*` to reach them.
-- **Two paths existed for this one secret — resolved 2026-08-13 by reading Vault.**
-  `kv/services/qbittorrent` (seeded by `iac/scripts/vault-seed.sh`) holds
-  `username` + `password` and **nothing else** — i.e. only the phantom credential,
-  no Proton key. `kv/services/media/qbittorrent` is **empty**. So the real secret,
-  the Proton WireGuard key, has never been in Vault at all: it lives only in
-  `/opt/qbittorrent-vpn/.env` on 110, which is its sole copy. Seed the
-  Proton key at the `services/media/*` path, delete `kv/services/qbittorrent`, and
-  drop its block from `iac`'s seed script or it will keep being recreated. See
+  The **`ansible`** policy grants `kv/data/services/* read`, so
+  `roles/qbittorrent-vpn/tasks/env.yml` reads the path as the `ansible` AppRole, with
+  no policy change, and renders `.env` from it (PET-453). Only the **seed** is
+  privileged (Vault admin token; the AppRoles can only read `services/*`). Never
+  commit the values; never widen a policy beyond `services/*` to reach them.
+- **Two paths existed for this one secret — resolved 2026-08-13 by reading Vault,
+  and closed by PET-452.** `kv/services/qbittorrent` (seeded by
+  `iac/scripts/vault-seed.sh`) held `username` + `password` and **nothing else** —
+  i.e. only the phantom credential, no Proton key. `kv/services/media/qbittorrent`
+  was **empty**, so the Proton WireGuard key's sole copy was
+  `/opt/qbittorrent-vpn/.env` on 110. PET-452 seeded the key at the
+  `services/media/*` path, deleted `kv/services/qbittorrent`, and dropped its block
+  from `iac`'s seed script so that nothing recreates it. See
   `docs/runbooks/qbittorrent-vault-secret.md`.
+- **The `vault` CLI sends a token on every request, an AppRole login included**
+  (found 2026-09-17, PET-453). It sends `VAULT_TOKEN` when that is set. Otherwise it
+  asks its token helper, which reads `~/.vault-token` or runs the helper that
+  `~/.vault` or `VAULT_CONFIG_PATH` names. On the Mac, either source can hold the
+  root token, because `vault login` writes `~/.vault-token`. A plain
+  `vault write auth/approle/login` then sends root along with the AppRole
+  credentials. When a login prints no token, a read that passes the empty token on
+  runs as root. The broken login then goes unnoticed.
+  `roles/qbittorrent-vpn/tasks/env.yml` runs the CLI with `VAULT_TOKEN` empty, `HOME`
+  set to `/var/empty` and `VAULT_CONFIG_PATH` set to `/dev/null`, so it finds no
+  token. A fake Vault that logged each request's token showed that each setting
+  blocks its own source.
 
 ## Ansible reach into the legacy media LXCs
 

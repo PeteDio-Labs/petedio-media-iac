@@ -100,14 +100,15 @@ new work into PR descriptions no longer applies — file it in Plane instead.
    which holds the arr stack (101, 104, 105, 109), flaresolverr 102 and the whole
    platform tier. pve02 is `192.168.50.11` and holds only qbittorrent-vpn 110, plex-gpu
    236 and runner-233. An address is not a name.
-4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key +
-   addresses** go to `kv/services/media/qbittorrent`, read by a media-scoped policy —
-   not committed, not in the shared `ansible` policy. Seed still pending;
-   `/opt/qbittorrent-vpn/.env` remains unmanaged.
-   Two traps here: `QBIT_WEBUI_PASSWORD` is a **phantom** and must not be seeded
-   (qBittorrent has no WebUI password at all — the subnet allowlist is the auth), and
-   the same secret is documented at **two paths** — `iac`'s seed script already
-   populated `kv/services/qbittorrent`. Resolve before seeding; see
+4. **Secrets in Vault, never in code.** qBittorrent's **Proton WireGuard key and
+   addresses** live at `kv/services/media/qbittorrent`, seeded under PET-452. The
+   shared `ansible` AppRole reads them, and `roles/qbittorrent-vpn/tasks/env.yml`
+   renders `/opt/qbittorrent-vpn/.env` from them (PET-453). The render refuses when
+   the write would recreate gluetun. `-e qbit_env_force=true` overrides that, and
+   `--skip-tags qbit_env` skips the render while Vault is sealed.
+   One trap here: `QBIT_WEBUI_PASSWORD` is a **phantom** and must not be seeded
+   (qBittorrent has no WebUI password at all — the subnet allowlist is the auth).
+   `kv/services/qbittorrent` held only that phantom, and PET-452 deleted it. See
    `docs/runbooks/qbittorrent-vault-secret.md`.
 
 5. **Declare it, don't run it.** When a repair can be expressed as config, express
@@ -174,12 +175,13 @@ petedio-iac's state lists no media VMID. There was no old side left to `state rm
 Roles: `media-base` (baseline) · `servarr` (one parametrised role for
 sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; updates plex-gpu
 236 since PET-394) · `seerr` (build from source) ·
-`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**; each image
+`qbittorrent-vpn` (gluetun/qbit compose, **templated in-repo**, with its `.env`
+rendered from Vault since PET-453; each image
 addresses its own registry, `docker.io` or `lscr.io`, since PET-448 — the shared
 `docker.pdlab.dev` Zot prefix named a registry that died with pve01, PET-389) ·
 `media-lifecycle` (in-use guards + ordered stop/start).
 
-Playbooks: `check-updates.yml` (read-only report) · `update-media.yml` ·
+Playbooks: `check-updates.yml` (version report; it still converges config) · `update-media.yml` ·
 `stack-up.yml` / `stack-down.yml` / `stack-power.yml` · `configure-media.yml`.
 `media-roles.yml` is the shared play body both update entry points import, so a
 dry-run and an apply exercise the same code.
@@ -196,7 +198,8 @@ dry-run and an apply exercise the same code.
   different one: PET-447, where the guard never ran on plex-gpu at all because the
   host key it was selected by named a deleted host.
 - **qBittorrent's API is unreachable from LXC 110's own host.** It has no WebUI
-  password (the `.env` one is a phantom that only earns hour-long IP bans), and its
+  password (the `QBIT_WEBUI_PASSWORD` that `.env` held until PET-453 was a phantom
+  that only earned hour-long IP bans), and its
   subnet allowlist can't match a host-origin request because Docker SNATs it to the
   bridge gateway. Use `docker exec qbittorrent curl …` — which is what the in-use
   guard does since `fdc8c8c`, and why it reads a real torrent list rather than a

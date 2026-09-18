@@ -473,8 +473,8 @@ working), and `/torrents/files` returns **48 files** for a season pack with per-
 "pull exact episodes".
 
 (Templating `port-sync.sh` into this repo is a separate, smaller task worth doing on
-its own merits — the README already flags the compose file's unmanaged `.env` as
-blocked on getting the Proton key into the media Vault scope.)
+its own merits. The role renders the compose file's `.env` from Vault (PET-453),
+which leaves `port-sync.sh` unmanaged.)
 
 ---
 
