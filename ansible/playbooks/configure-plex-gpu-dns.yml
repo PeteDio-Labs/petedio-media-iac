@@ -1,0 +1,72 @@
+---
+# Point plex-gpu 236 at the mesh router for DNS (PET-504).
+#
+#   ansible-playbook playbooks/configure-plex-gpu-dns.yml
+#
+# plex-gpu holds one NIC, on the .86 mesh. Nothing on .86 routes to .50, so the
+# container cannot reach the .50 router it used to resolve through. Plex then fails
+# to reach plex.tv by name, and remote access and sign-in break with it.
+#
+# WHY ANSIBLE AND NOT TERRAFORM. The proxmox-lxc module lists initialization[0].dns
+# in ignore_changes, because the media hosts carry mixed DNS that predates the
+# module. Lifting that for one host would put every other container's DNS in play.
+# This play sets the one value on the node and changes nothing when it already holds.
+#
+# It runs on the NODE, not in the container: `pct set` writes /etc/pve/lxc/236.conf,
+# and Proxmox rewrites the container's /etc/resolv.conf from it.
+#
+# ⚠ A RUNNING CONTAINER TAKES THE VALUE AT ITS NEXT START. On a running 236,
+# `pct pending 236` shows it as `new nameserver`, and /etc/resolv.conf still names
+# the old server. Run `pct reboot 236` on pve02 to apply it. Verified 2026-09-23.
+
+- name: Plex-gpu — nameserver on the mesh
+  hosts: pve02
+  gather_facts: false
+  become: false
+  vars:
+    plex_gpu_vmid: 236
+    plex_gpu_nameserver: 192.168.86.1
+  tasks:
+    - name: Plex-gpu — read the nameserver Proxmox holds
+      ansible.builtin.command: pct config {{ plex_gpu_vmid }}
+      register: plex_gpu_config
+      changed_when: false
+      check_mode: false
+
+    - name: Plex-gpu — resolve the value in force
+      ansible.builtin.set_fact:
+        plex_gpu_nameserver_now: >-
+          {{ (plex_gpu_config.stdout | regex_findall('(?m)^nameserver: (.*)$')
+              or ['(none)']) | first }}
+
+    - name: Plex-gpu — report what is in force, and what changes
+      ansible.builtin.debug:
+        msg: >-
+          nameserver: in force "{{ plex_gpu_nameserver_now }}"
+          {{ '-> "' ~ plex_gpu_nameserver ~ '"'
+             if plex_gpu_nameserver_now != plex_gpu_nameserver
+             else '(already converged)' }}
+
+    - name: Plex-gpu — set the nameserver
+      when: plex_gpu_nameserver_now != plex_gpu_nameserver
+      ansible.builtin.command: >-
+        pct set {{ plex_gpu_vmid }} --nameserver {{ plex_gpu_nameserver }}
+      changed_when: true
+
+    # A --check run never sends the write, so skip the read-back there rather than
+    # fail on a node that is fine.
+    - name: Plex-gpu — read the nameserver back
+      when: not ansible_check_mode
+      ansible.builtin.command: pct config {{ plex_gpu_vmid }}
+      register: plex_gpu_config_after
+      changed_when: false
+
+    - name: Plex-gpu — assert the nameserver stuck
+      when: not ansible_check_mode
+      ansible.builtin.assert:
+        that: >-
+          ('nameserver: ' ~ plex_gpu_nameserver) in plex_gpu_config_after.stdout_lines
+        fail_msg: >-
+          pct config {{ plex_gpu_vmid }} does not read back
+          nameserver {{ plex_gpu_nameserver }}.
+        success_msg: "nameserver = {{ plex_gpu_nameserver }}"

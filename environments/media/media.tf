@@ -50,11 +50,9 @@
 #   - mount target paths differ per container (/mnt/media vs /media, etc.), and
 #     104, 105 and 109 carry shared=1 on both bind mounts, which is what let them
 #     migrate to pve03 (Proxmox refuses to migrate an unflagged local bind mount)
-#   - plex-gpu (236) is the DUAL-HOMED host: net0 vmbr0/.50 LAN (default route)
-#     + net1 vmbr2/.86 mesh (PET-444). Read that mapping carefully — the pve01-era
-#     comment here had it inverted, and named plex 103, which no longer exists.
+#   - plex-gpu (236) has ONE NIC, on vmbr2, the .86 mesh (PET-504). No .50 leg.
 #   - seerr (101) has NO bind-mounts and its only NIC is eth1 (firewall on)
-#   - qbittorrent-vpn (110), plex-gpu and seerr have the Proxmox firewall enabled
+#   - qbittorrent-vpn (110) and seerr have the Proxmox firewall enabled
 #
 # NOTHING IS ON vmbr1 OR sdb3-storage. Both belonged to pve01: sdb3-storage is
 # `disabled` in `pvesm status`, and on pve02 vmbr1 is the dead VXLAN leg. Several
@@ -147,43 +145,30 @@ removed {
 # ⚠ THE BRIDGE NUMBERS ARE INVERTED BETWEEN THE NODES. Do NOT copy 103's values.
 #     pve01:  vmbr0 = .86 mesh    vmbr1 = .50 LAN          (node is gone)
 #     pve02:  vmbr0 = .50 LAN     vmbr1 = vxlan86, dead     (see below)
-# So this container's LAN bridge is vmbr0 — the OPPOSITE of what plex 103 used,
-# where vmbr1 carried the .50 leg. A container placed on the wrong bridge cannot
-# reach its gateway. petedio-iac's runner.tf carries the same warning for
-# runner-233.
+#             vmbr2 = the wired .86 mesh adapter
+# A container placed on the wrong bridge cannot reach its gateway. petedio-iac's
+# runner.tf carries the same warning for runner-233.
 #
-# NO .86 MESH LEG ON vmbr1 — IT MUST NOT COME BACK THERE (PET-332).
+# ONE NIC, ON THE .86 MESH, AND NOTHING ON .50 (PET-504).
 #
-# ⚠ THE PROHIBITION IS ABOUT vmbr1, NOT ABOUT THE MESH. The mesh leg returned on
-# 2026-09-15 on a REAL WIRED NIC (vmbr2), which is a different thing entirely —
-# see the net1_* arguments below. Read the next two paragraphs before assuming
-# this block forbids what the config now does.
+# pve02 has a USB-Ethernet adapter cabled into the .86 mesh, bridged as vmbr2
+# (petedio-iac's mesh-usb-bridge role). A wired NIC can bridge other MACs, so the
+# container holds a genuine layer-2 mesh address. Plex clients live on the mesh,
+# so that address is the only one Plex serves from.
 #
-# This container used to hold a real 192.168.86.236 on vmbr1 for native Plex
-# client discovery. vmbr1 on pve02 is not a NIC: it is backed by `vxlan86`, a
-# VXLAN that carried mesh layer-2 across the .50 cable to pve01 — the ONLY node
-# cabled to the .86 mesh — which bridged it into its own mesh bridge.
+# The .50 leg is gone on purpose. The lab still reaches Plex: .50 hosts route to
+# .86 through the .50 router's NAT (it sits on the mesh as 192.168.86.44). The
+# reverse does not route, which is why nothing here may point at .50: the
+# nameserver is 192.168.86.1, set by ansible/playbooks/configure-plex-gpu-dns.yml.
 #
-# pve01 died on 2026-09-03. pve03 has no mesh bridge and no VXLAN, only vmbr0 on
-# .50 and the wlo1 escape hatch, so nothing terminates that tunnel any more.
-# Re-declaring eth1 ON vmbr1 would bring up an interface on a tunnel with
-# nothing at the far end, and terraform would report success — which is exactly
-# what it did on every merge from 2026-09-03 to 2026-09-04: `Plan: 0 to add, 1
-# to change, 0 to destroy`, forever. That is still true and still forbidden.
+# The pete-pi-1 proxy (plex-bridge) is deleted. The tailnet address
+# (100.97.96.88) still answers, but Plex does not advertise it.
 #
-# ⚠ pve03 now holds pve01's old address, 192.168.50.10. If vxlan86's remote is
-# configured by IP rather than by name, that tunnel now points at pve03 — a
-# different machine that is not on the mesh. Check before reviving any of this.
+# The primary NIC keeps the MAC the mesh leg has always had, so the Google mesh
+# sees the same device and its DHCP reservation still applies.
 #
-# WHAT CHANGED ON 2026-09-15. pve02 gained a USB-Ethernet adapter cabled
-# directly into the .86 mesh, bridged as vmbr2 (petedio-iac's mesh-usb-bridge
-# role). A wired NIC can bridge other MACs where a WiFi station cannot — 802.11
-# three-address frames are why pve03's wlo1 could never fill this gap — so the
-# container gets a genuine layer-2 mesh presence, not a tunnel and not NAT.
-#
-# The other three routes still exist: the tailnet (100.97.96.88, depends on
-# nothing else), the pete-pi-1 proxy (192.168.86.46:32400), and 192.168.50.236
-# on the LAN. The proxy stays as fallback until the direct leg is proven.
+# NEVER PUT A NIC ON vmbr1 (PET-332). pve02's vmbr1 is the vxlan86 tunnel to the
+# departed pve01, and nothing terminates it. Terraform reports success anyway.
 #
 # WHY 236 AND NOT A 1xx. The 1xx block is the pve01 media stack. This server runs
 # on pve02, so it follows the convention every non-media service uses: a 2xx VMID
@@ -196,32 +181,16 @@ module "plex_gpu" {
 
   vm_id        = 236
   hostname     = "plex-gpu"
-  ipv4_address = "192.168.50.236/24"
-  gateway      = "192.168.50.1"
-  bridge       = "vmbr0" # pve02's LAN bridge — NOT vmbr1. See the warning above.
-  # eth1 on vmbr2: pve02's new USB-Ethernet adapter, wired directly to the
-  # .86 mesh (petedio-iac's mesh-usb-bridge role brings the bridge up). A
-  # wired NIC can bridge other MACs where a WiFi station cannot, so this
-  # gives Plex a genuine mesh presence again instead of only the pete-pi-1
-  # proxy. NOT vmbr1 — that is the dead VXLAN leg to the departed pve01.
-  net1_bridge = "vmbr2"
-  # 192.168.86.236 IS NOT AN ARBITRARY CHOICE. plex.tv still advertises this
-  # exact address for this server, and Plex cannot correct it: every publish
-  # since 2026-09-10 returns 403 ("Updating device connections failed", state
-  # "Mapped - Not Published (Double NAT)"), because .50 is NATed behind .86.
-  # The address was this container's mesh leg over the pve01 VXLAN until that
-  # node died and PET-332 removed it, which is why the published entry is
-  # stale rather than wrong.
-  #
-  # Restoring the SAME address makes the already-published entry valid again,
-  # so no publish is needed. Clients that currently try it, fail, and fall back
-  # to Plex Relay — capped at 2 Mbps SD (videoBitrate=2000) — reach the server
-  # directly instead. That Relay fallback is the reported playback problem.
-  #
-  # ⚠ NO net1_gateway, deliberately. The .50 leg holds the default route; a
-  # second default gateway here would break the container's egress.
-  net1_address     = "192.168.86.236/24"
-  firewall         = true
+  ipv4_address = "192.168.86.236/24"
+  gateway      = "192.168.86.1"
+  bridge       = "vmbr2" # pve02's wired mesh adapter. NOT vmbr1. See above.
+  # 192.168.86.236 IS NOT AN ARBITRARY CHOICE. plex.tv advertises this exact
+  # address for this server, and Plex cannot republish: every publish since
+  # 2026-09-10 returns 403 ("Updating device connections failed").
+  mac_address = "BC:24:11:0D:D9:A4"
+  # No 236.fw exists, so the firewall filters nothing. It stays off, matching
+  # the mesh leg as it ran before this change.
+  firewall         = false
   cores            = 4
   memory_dedicated = 4096
   memory_swap      = 2048

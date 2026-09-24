@@ -1,6 +1,6 @@
 # Inputs for the reusable proxmox-lxc module. Copied from petedio-iac and extended
 # for the media stack: per-host `firewall`, bind-`mount_points`, and an optional
-# second NIC (`net1_*`) for the dual-homed plex host. `features` stays Ansible's
+# second NIC (`net1_*`) for a dual-homed host, which no caller uses. `features` stays Ansible's
 # job (the root@pam/API-token gotcha — see docs/GOTCHAS.md).
 
 variable "vm_id" {
@@ -86,7 +86,7 @@ variable "ipv6_auto" {
   default     = false
 }
 
-# --- Optional second interface (dual-homed hosts: plex) ----------------------
+# --- Optional second interface (dual-homed hosts; no caller) ------------------
 variable "net1_address" {
   description = "CIDR IPv4 for the second interface (eth1). null = single-homed (default)."
   type        = string
@@ -117,6 +117,17 @@ variable "net1_mtu" {
     rather than an MTU one.
   EOT
   type        = number
+  default     = null
+}
+
+variable "mac_address" {
+  description = <<-EOT
+    MAC address for the primary interface. null lets Proxmox choose one (default).
+
+    Set it when a router keys anything on the MAC. plex-gpu 236 keeps the MAC its
+    mesh address has always had, so the Google mesh sees the same device.
+  EOT
+  type        = string
   default     = null
 }
 

@@ -9,7 +9,7 @@
 #   ansible-playbook playbooks/bootstrap-plex-gpu.yml
 #
 # Claiming the server is interactive and stays manual: open
-# http://192.168.50.236:32400/web from the LAN or the tailnet, sign in, add a
+# http://192.168.86.236:32400/web from the mesh or the LAN, sign in, add a
 # library pointing at /mnt/media, and switch on hardware acceleration.
 
 - name: Bootstrap Plex on the pve02 GPU node

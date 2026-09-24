@@ -61,7 +61,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 # host -> ip. Mirrors ansible/inventory/hosts.yml. These legacy IPs are permanent,
 # not interim: the renumber to the 21x block (PET-49) was CANCELED, not deferred.
 #
-# `plex` is 192.168.50.236 (VMID 236, plex-gpu, pve02) and NOT the .140 this map
+# `plex` is 192.168.86.236 (VMID 236, plex-gpu, pve02; .86-only since PET-504) and NOT the .140 this map
 # carried until PET-354. Plex 103 at .140 died with pve01 on 2026-09-03 and was not
 # rebuilt, so the four plex probes had been reporting a hard NO against an address
 # that answers nothing. The probe technique itself was never wrong: read the token
@@ -79,7 +79,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 ip_for() {
   case "$1" in
     seerr)           echo 192.168.50.33  ;;
-    plex)            echo 192.168.50.236 ;;
+    plex)            echo 192.168.86.236 ;;
     sonarr)          echo 192.168.50.15  ;;
     radarr)          echo 192.168.50.16  ;;
     prowlarr)        echo 192.168.50.20  ;;
