@@ -185,22 +185,28 @@ resource "proxmox_virtual_environment_container" "this" {
       # clean and stops a later apply stripping a mount the token cannot
       # recreate. petedio-iac's copy of this module carries the same entry.
       mount_point,
-      # startup: boot order and up/down delays are set on the node with
-      # `pct set <id> --startup order=N,up=S,down=S`, not declared here. Nothing
-      # in this repo sets them, so an apply would otherwise STRIP the ordering
-      # that PET-305 put on every media LXC before the lab move — a regression
-      # that only shows up at the next cold boot. petedio-iac's copy of this
-      # module carries the same entry for the same reason; this one was missed
-      # because PET-305 never applied media-iac. Recorded in petedio-iac
-      # docs/runbooks/lab-move.md.
+      # startup: a guest's boot order and up/down delays. This module declares no
+      # startup block, so without this entry an apply would strip the ordering.
+      # The loss would show only at the next cold boot. petedio-iac's copy of
+      # this module carries the same entry for the same reason. PET-305 missed
+      # this copy because it never applied media-iac.
       #
-      # The PET-305 list read 100/101/103/104/105/109 at order=7,up=0,down=15 and
-      # 110 at order=6,up=20,down=30. Two of those guests are gone: lidarr 100
-      # (PET-319) and plex 103 (died with pve01). Read on both nodes 2026-09-16:
-      # 101/104/105/109 still order=7,up=0,down=15 and 110 still
-      # order=6,up=20,down=30 — but plex-gpu 236 has NO startup line at all, so
-      # the only Plex has no boot ordering. PET-451 is the `pct set` that fixes
-      # that, and it needs root@pam.
+      # petedio-iac declares the media guests' values instead, in
+      # ansible/roles/lxc-startup/defaults/main.yml. Its
+      # playbooks/configure-lxc-startup.yml runs `pct set <id> --startup` for
+      # each declared guest whose line differs, and fails under --check while
+      # one does. To change an order, change it in that role.
+      #
+      #   101  seerr            pve03  order=7,up=0,down=15
+      #   104  sonarr           pve03  order=7,up=0,down=15
+      #   105  radarr           pve03  order=7,up=0,down=15
+      #   109  prowlarr         pve03  order=7,up=0,down=15
+      #   110  qbittorrent-vpn  pve02  order=6,up=20,down=30
+      #   236  plex-gpu         pve02  order=7,up=0,down=15
+      #
+      # PET-305 also set lidarr 100 and plex 103, and both guests are gone
+      # (PET-319, and the loss of pve01). The PET-440 audit found 236 with no
+      # startup line, and PET-451 set it by hand on 2026-09-17.
       startup,
     ]
   }
