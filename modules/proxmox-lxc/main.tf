@@ -1,13 +1,11 @@
 # Reusable Debian LXC on Proxmox — the EC2-equivalent building block.
 # Copied verbatim from petedio-iac (the proven runner/poker pattern) and extended
-# with an OPTIONAL second network interface (var.net1_*) for a dual-homed host.
+# with an OPTIONAL second network interface (var.net1_*) for a dual-homed host
+# and an optional fixed MAC (var.mac_address) on the primary one.
 #
-# ⚠ THE MAPPING IS INVERTED FROM WHAT THIS COMMENT USED TO SAY. It described plex
-# 103 on pve01: net0 on the .86 mesh via vmbr0, net1 on the .50 LAN via vmbr1.
-# That host died with pve01 on 2026-09-03. The one dual-homed host is plex-gpu 236
-# on pve02: net0 = vmbr0, 192.168.50.236/24, the LAN and the default route; net1 =
-# vmbr2, 192.168.86.236/24, the mesh (PET-444). pve02's vmbr1 is the dead VXLAN leg
-# to pve01 and carries nothing — putting a NIC there gives it no route.
+# No container in this repo is dual-homed. plex-gpu 236 was, until PET-504 left
+# it one NIC on vmbr2, the .86 mesh. pve02's vmbr1 is the dead VXLAN leg to pve01
+# and carries nothing, so a NIC there gets no route.
 #
 # Deliberately NO `features {}` block: Proxmox rejects API tokens for the
 # features mutation (root@pam check), so nesting/keyctl are set out-of-band by
@@ -93,14 +91,14 @@ resource "proxmox_virtual_environment_container" "this" {
   }
 
   network_interface {
-    name     = var.interface_name
-    bridge   = var.bridge
-    firewall = var.firewall
+    name        = var.interface_name
+    bridge      = var.bridge
+    firewall    = var.firewall
+    mac_address = var.mac_address
   }
 
-  # Second NIC for dual-homed hosts — today only plex-gpu 236, eth1 on vmbr2 (the
-  # .86 mesh). Only created when var.net1_bridge is set, so single-homed hosts are
-  # unaffected. The bridge is the caller's to name; do not assume vmbr1, which on
+  # Second NIC for a dual-homed host. No caller sets it. Only created when
+  # var.net1_bridge is set, so single-homed hosts are unaffected. The bridge is the caller's to name; do not assume vmbr1, which on
   # pve02 is the dead VXLAN leg.
   dynamic "network_interface" {
     for_each = var.net1_bridge != null ? [1] : []

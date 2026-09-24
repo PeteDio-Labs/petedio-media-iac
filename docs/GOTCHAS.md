@@ -29,9 +29,10 @@ summarized in `CLAUDE.md`. This file adds what's special about the media capture
   (`sdb3-storage` was pve01's and died with it.)
 - **~~plex (103) is DUAL-HOMED~~ — GONE.** 103 died with pve01 on 2026-09-03 and
   was not rebuilt. Its replacement, plex-gpu (236) on pve02, is single-homed on
-  `192.168.50.236` because pve02 has one NIC on `.50`; the TVs on the `.86` mesh
-  reach it over the tailnet (`100.97.96.88`) or the pete-pi-1 proxy, not over a
-  second NIC. The module's `net1_*` vars now have no consumer in this repo.
+  the `.86` mesh: `192.168.86.236` on `vmbr2`, pve02's wired mesh adapter, with no
+  `.50` address (PET-504). Lab hosts on `.50` reach it through the `.50` router's
+  NAT; nothing on `.86` can reach `.50`, so its nameserver is `192.168.86.1`.
+  The module's `net1_*` vars have no consumer in this repo.
 - **seerr (101) is odd:** its only NIC is **eth1** (not eth0), firewall on, and it
   has **no bind-mounts**. Capture exactly that — don't assume eth0.
 - **Bind-mount target paths differ per container:** `/mnt/media` vs `/media`,

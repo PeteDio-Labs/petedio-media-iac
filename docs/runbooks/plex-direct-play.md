@@ -11,7 +11,8 @@
 >   `100.64.0.0/10`.
 >
 > The premise under Context does not hold either. The Apple TV is not on the
-> tailnet; it reaches Plex through the pete-pi-1 proxy at `192.168.86.46`. Its
+> tailnet; it reached Plex through the pete-pi-1 proxy at `192.168.86.46`, which
+> PET-504 removed. Its
 > transcodes on 2026-09-11 came from the client: a fallback to Plex Relay, which
 > caps a stream at 2 Mbps, and its own requests for `directPlay=0`, on the LAN as
 > well, for MKV files. See `vault/Systems/plex-on-the-mesh.md`.
@@ -28,10 +29,10 @@ runbook lifts those ceilings.
 
 Plex sorts each client into LAN or remote by matching its address against the LAN
 Networks list, which defaults to the server's own subnets. plex-gpu (236) holds one
-LAN address, `192.168.50.236`. The TVs reach it over the tailnet at
-`100.97.96.88`, which sits outside `192.168.50.0/24`, so **Plex files your own TVs
-as remote clients** and applies the remote ceilings to them. See the group comment
-on `gpu-media` in `ansible/inventory/hosts.yml` for how the tailnet became that path.
+address, `192.168.86.236`, on the mesh with the TVs. A client that arrives any other
+way, such as over the tailnet at `100.97.96.88` or through Plex Relay, sits outside
+that subnet, so **Plex files it as a remote client** and applies the remote
+ceilings to it.
 
 `roles/plex-settings` converges three preferences over `/:/prefs`:
 
@@ -82,7 +83,7 @@ server accepted the setting; it does not prove any client Direct Plays.
 To check a real stream, start playback on a TV and read the session:
 
 ```bash
-ssh root@192.168.50.236 \
+ssh root@192.168.86.236 \
   'TOK=$(grep -oE "PlexOnlineToken=\"[^\"]*\"" \
      "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml" \
      | sed "s/.*=\"//;s/\"//"); \

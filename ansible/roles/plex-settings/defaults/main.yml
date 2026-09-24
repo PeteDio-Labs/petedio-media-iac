@@ -9,11 +9,10 @@
 #
 # WHY A TV ON THE LAN STILL COUNTS AS REMOTE. Plex sorts a client into LAN or
 # remote by matching its address against the LAN Networks list, which defaults to
-# the server's own subnets. plex-gpu holds one LAN address, 192.168.50.236, and
-# the TVs reach it over the tailnet at 100.97.96.88 — an address outside
-# 192.168.50.0/24. Plex therefore files those clients as remote and applies the
-# remote ceilings below to them. See the jump-host note in inventory/hosts.yml for
-# how the tailnet became the path the TVs take.
+# the server's own subnets. plex-gpu holds one address, 192.168.86.236, on the
+# mesh with the TVs. A client that arrives any other way, over the tailnet or
+# through Plex Relay, sits outside that subnet. Plex therefore files it as remote
+# and applies the remote ceilings below to it.
 #
 # ⚠ THIS LIFTS THE CEILING FOR EVERY REMOTE CLIENT, not only the tailnet ones.
 # An off-site player becomes eligible for the original file, so one large file can
@@ -45,15 +44,22 @@ plex_settings_treat_wan_as_local: true
 plex_settings_wan_per_stream_max_kbps: 0
 plex_settings_wan_total_max_kbps: 0
 
+# The URLs Plex advertises to clients beyond the ones it finds itself, under
+# Settings > Network > Custom server access URLs. The mesh NIC is the only path
+# Plex serves from (PET-504), so it is the only entry. Plex still lists its own
+# interface and its plex.direct names; this list adds, it does not replace.
+plex_settings_custom_connections:
+  - http://192.168.86.236:32400
+
 # The keys this role writes, paired with the values above. Add a key here and the
 # existence check, the write, the comparison and the read-back assertion all pick it
 # up.
 #
-# ⚠ ONLY BOOLS AND NUMBERS BELONG HERE AS WRITTEN. The comparison folds true to 1 and
-# false to 0 so a converged bool does not read as drifted. That rewrite applies to the
-# whole value, so a text setting holding "true" or "false" — a path, a network list —
-# would compare wrong. Drop the normalise step to a per-type rule before you add one.
+# The comparison folds a value of exactly true to 1 and false to 0, so a converged
+# bool does not read as drifted. A text value passes through whole. The comparison
+# also lowercases both ends, so write a text value in lowercase.
 plex_settings_prefs:
   TreatWanIpAsLocal: "{{ 1 if plex_settings_treat_wan_as_local | bool else 0 }}"
   WanPerStreamMaxUploadRate: "{{ plex_settings_wan_per_stream_max_kbps }}"
   WanTotalMaxUploadRate: "{{ plex_settings_wan_total_max_kbps }}"
+  customConnections: "{{ plex_settings_custom_connections | join(',') }}"
