@@ -1,0 +1,98 @@
+# The drift computation for tasks/indexers.yml, split out so the test suite can
+# include this exact file rather than a copy of it, the same reason the
+# qbittorrent-vpn role keeps `digest-verdict.yml` apart. Everything here is pure:
+# it reads `servarr_indexers` (declared) and `servarr_indexers_live` (the JSON
+# list GET /api/v1/indexer returns) and sets facts. It touches no host.
+# `tests/prowlarr-indexer-drift.yml` feeds it recorded lists.
+#
+# It sets:
+#   servarr_indexer_puts   the full live object of each drifting indexer, changed
+#                          only in `enable` and the seeder field's `value`
+#   servarr_indexer_drift  one line per drifting indexer, for the report
+#
+# The objects can hold a private tracker's credentials, so every task that
+# carries one sets no_log.
+---
+- name: Servarr — reset the indexer drift
+  ansible.builtin.set_fact:
+    servarr_indexer_puts: []
+    servarr_indexer_drift: []
+
+# A declared name Prowlarr does not have is a failure, never a skip. Skipping it
+# would report "no drift" for an indexer this run never measured: a renamed or
+# deleted indexer would leave its declaration silently doing nothing.
+- name: Servarr — fail when a declared indexer is missing or ambiguous
+  vars:
+    servarr_live_names: "{{ servarr_indexers_live | map(attribute='name') | list }}"
+    servarr_missing: "{{ servarr_indexers.keys() | reject('in', servarr_live_names) | list }}"
+    servarr_ambiguous: >-
+      {{ servarr_indexers.keys() | select('in', servarr_live_names)
+         | select('in', servarr_live_names | community.general.counter | dict2items
+                        | selectattr('value', 'gt', 1) | map(attribute='key') | list)
+         | list }}
+    servarr_problems: >-
+      {{ (['Prowlarr has no indexer named ' ~ (servarr_missing | to_json)] if servarr_missing else [])
+         + (['Prowlarr has more than one named ' ~ (servarr_ambiguous | to_json)] if servarr_ambiguous else []) }}
+  ansible.builtin.fail:
+    msg: >-
+      {{ servarr_problems | join('; ') }}. It has {{ servarr_live_names | to_json }}.
+      Make each name in servarr_indexers match exactly one of Prowlarr's, or
+      remove the entry.
+  when: (servarr_missing | length) > 0 or (servarr_ambiguous | length) > 0
+
+- name: Servarr — fail when a managed seeder floor has no field to hold it
+  ansible.builtin.fail:
+    msg: >-
+      {{ si.key }} declares min_seeders, but Prowlarr returns no
+      {{ servarr_indexer_seeders_field }} field for it. Check the field name
+      against GET /api/v1/indexer, or remove min_seeders from the entry.
+  loop: >-
+    {{ servarr_indexers | dict2items
+       | selectattr('value.min_seeders', 'defined')
+       | rejectattr('value.min_seeders', 'none') | list }}
+  loop_control:
+    loop_var: si
+    label: "{{ si.key }}"
+  vars:
+    si_live: "{{ servarr_indexers_live | selectattr('name', 'equalto', si.key) | first }}"
+  when: servarr_indexer_seeders_field not in (si_live.fields | default([]) | map(attribute='name') | list)
+
+# One pass per declared indexer. A drifting one contributes its live object with
+# only `enable` and the seeder field's `value` replaced. Every other key, and the
+# order of `fields`, stays as Prowlarr returned it, because PUT replaces the whole
+# indexer. Prowlarr omits `value` when a field is unset, so an absent value reads
+# as none.
+- name: Servarr — list the indexers that drift from servarr_indexers
+  ansible.builtin.set_fact:
+    servarr_indexer_puts: >-
+      {{ servarr_indexer_puts
+         + [si_live | combine({'enable': si_want_enable, 'fields': si_fields_new})] }}
+    servarr_indexer_drift: >-
+      {{ servarr_indexer_drift
+         + [si.key ~ ' (id ' ~ si_live.id ~ '):'
+            ~ (' enable ' ~ si_live.enable ~ ' -> ' ~ si_want_enable if si_enable_drift else '')
+            ~ (' min_seeders ' ~ (si_have_seeders | default('unset', true)) ~ ' -> ' ~ si_want_seeders
+               if si_seeders_drift else '')] }}
+  loop: "{{ servarr_indexers | dict2items }}"
+  loop_control:
+    loop_var: si
+    label: "{{ si.key }}"
+  vars:
+    si_live: "{{ servarr_indexers_live | selectattr('name', 'equalto', si.key) | first }}"
+    si_want_enable: "{{ si.value.enable | bool }}"
+    si_enable_drift: "{{ (si_live.enable | bool) != si_want_enable }}"
+    si_seeders_managed: "{{ si.value.min_seeders is defined and si.value.min_seeders is not none }}"
+    si_field_names: "{{ si_live.fields | default([]) | map(attribute='name') | list }}"
+    si_idx: "{{ si_field_names.index(servarr_indexer_seeders_field) if si_seeders_managed else -1 }}"
+    si_have_seeders: "{{ si_live.fields[si_idx | int].value | default(none) if si_seeders_managed else none }}"
+    si_want_seeders: "{{ si.value.min_seeders | int if si_seeders_managed else none }}"
+    si_seeders_drift: >-
+      {{ si_seeders_managed
+         and (si_have_seeders is none or (si_have_seeders | int) != si_want_seeders) }}
+    si_fields_new: >-
+      {{ si_live.fields[:si_idx | int]
+         + [si_live.fields[si_idx | int] | combine({'value': si_want_seeders})]
+         + si_live.fields[si_idx | int + 1:]
+         if si_seeders_drift else si_live.fields }}
+  when: si_enable_drift or si_seeders_drift
+  no_log: true

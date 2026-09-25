@@ -1,0 +1,90 @@
+# One case for tests/prowlarr-indexer-drift.yml. Included once per recorded answer.
+---
+# A value left over from the previous case would let this one pass for the wrong
+# reason, so reset every input and output the drift touches.
+- name: "{{ drift_case.name }} — reset"
+  ansible.builtin.set_fact:
+    servarr_indexers: "{{ drift_case.declare | default(declared) }}"
+    servarr_indexers_live: []
+    servarr_indexer_puts: []
+    servarr_indexer_drift: []
+    drift_failed: false
+    failed_msg: ""
+
+# Builds the live list from the fixture. The seeder edit rebuilds `fields` in
+# `order` order, independently of the drift file's own index arithmetic.
+- name: "{{ drift_case.name }} — build the live answer"
+  ansible.builtin.set_fact:
+    servarr_indexers_live: >-
+      {{ servarr_indexers_live
+         + [live | combine({'enable': ci_edit.enable} if 'enable' in ci_edit else {})
+                 | combine({'fields': ci_fields})] }}
+  loop: >-
+    {{ indexer_fixture | rejectattr('name', 'in', drift_case.drop | default([])) | list
+       + indexer_fixture | selectattr('name', 'equalto', drift_case.duplicate | default(''))
+         | map('combine', {'id': 99}) | list }}
+  loop_control:
+    loop_var: live
+    label: "{{ live.name }}"
+  vars:
+    ci_edit: "{{ (drift_case.edit | default({}))[live.name] | default({}) }}"
+    ci_seeder: "{{ live.fields | selectattr('name', 'equalto', servarr_indexer_seeders_field) | first }}"
+    ci_seeder_new: >-
+      {{ ci_seeder | dict2items | rejectattr('key', 'equalto', 'value') | items2dict
+         if ci_edit.seeders | default('') == 'unset'
+         else ci_seeder | combine({'value': ci_edit.seeders}) }}
+    ci_fields: >-
+      {{ (live.fields | rejectattr('name', 'equalto', servarr_indexer_seeders_field) | list
+          + [ci_seeder_new]) | sort(attribute='order')
+         if 'seeders' in ci_edit else live.fields }}
+
+- name: "{{ drift_case.name }} — run the drift"
+  block:
+    - name: "{{ drift_case.name }} — compare"
+      ansible.builtin.include_tasks: ../../roles/servarr/tasks/indexer-drift.yml
+  rescue:
+    - name: "{{ drift_case.name }} — the drift refused"
+      ansible.builtin.set_fact:
+        drift_failed: true
+        failed_msg: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: "{{ drift_case.name }} — assert what it would PUT"
+  vars:
+    want: "{{ drift_case.want_puts | default({}) }}"
+    got_names: "{{ servarr_indexer_puts | map(attribute='name') | sort }}"
+  ansible.builtin.assert:
+    that:
+      - drift_failed == (drift_case.want_failed | default(false))
+      - drift_case.want_msg_has is not defined or drift_case.want_msg_has in failed_msg
+      - drift_failed or got_names == (want.keys() | sort)
+    fail_msg: >-
+      {{ drift_case.name }}: failed={{ drift_failed }}, message={{ failed_msg | to_json }},
+      PUT {{ got_names }}; want failed={{ drift_case.want_failed | default(false) }},
+      PUT {{ want.keys() | sort }}.
+    success_msg: >-
+      {{ drift_case.name }}: {{ 'REFUSED: ' ~ failed_msg if drift_failed
+      else 'PUT ' ~ (got_names | to_json) ~ ' ' ~ (servarr_indexer_drift | to_json) }}
+
+# Each PUT object carries the declared values, and equals its live object in
+# every other key, every other field, and the order of `fields`.
+- name: "{{ drift_case.name }} — assert each PUT changes only what drifted"
+  vars:
+    live: "{{ servarr_indexers_live | selectattr('id', 'equalto', put.id) | first }}"
+    want: "{{ drift_case.want_puts[put.name] }}"
+    put_seeder: "{{ put.fields | selectattr('name', 'equalto', servarr_indexer_seeders_field) | first }}"
+    others: "{{ put.fields | rejectattr('name', 'equalto', servarr_indexer_seeders_field) | list }}"
+    live_keep: "{{ {'enable': live.enable, 'fields': live.fields} }}"
+    live_others: "{{ live.fields | rejectattr('name', 'equalto', servarr_indexer_seeders_field) | list }}"
+  ansible.builtin.assert:
+    that:
+      - put.enable == want.enable
+      - put_seeder.value | default(none) == want.seeders
+      - (put | combine(live_keep)) == live
+      - put.fields | map(attribute='name') | list == live.fields | map(attribute='name') | list
+      - others == live_others
+    fail_msg: "{{ drift_case.name }}: the PUT for {{ put.name }} changes more than it should, or the wrong value."
+    quiet: true
+  loop: "{{ servarr_indexer_puts }}"
+  loop_control:
+    loop_var: put
+    label: "{{ put.name }}"
