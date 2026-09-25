@@ -28,3 +28,40 @@ media_health_port: 9696
 # If logind breaks here again, check `pct config 109` for its features before masking
 # anything — that is the cause you already know about.
 media_base_masked_units: []
+
+# ---------------------------------------------------------------- indexers --
+# Prowlarr's indexer settings, declared (PET-296). Until PET-296 they were set
+# through the API on 2026-08-14 and existed only in the vault note
+# Practices/indexers-and-fake-releases.md, so a rebuild would have restored the
+# fake-release indexers. roles/servarr/tasks/indexers.yml reads each indexer by
+# name and writes only the ones that differ. It fails when a name here is missing
+# from Prowlarr, rather than skipping it.
+#
+# Nothing applies this on merge: media-iac runs no Ansible from a push. To apply
+# it, run from ansible/ with SSH to CT 109, dry run first:
+#   ansible-playbook -i inventory/hosts.yml playbooks/media-roles.yml \
+#     --limit prowlarr --check --diff
+servarr_indexers:
+  # Disabled on 2026-08-14: it served fake `.exe` releases that filled the
+  # downloads volume. ⚠ That cost coverage. LimeTorrents grabbed 10 of the 12
+  # Big Brother S28 episodes, so disabling it left the show single-homed on The
+  # Pirate Bay, and on 2026-08-17 the show stopped arriving when TPB failed.
+  # Re-enabling it is this one line (`enable: true`); Pedro decides.
+  LimeTorrents:
+    enable: false
+    min_seeders: 10
+  # The remaining public source for US network TV. A floor of 10 seeders rejects
+  # the low-seeded fakes.
+  The Pirate Bay:
+    enable: true
+    min_seeders: 10
+  # Anime is niche and legitimately thin on seeders, so a public-tracker floor
+  # would reject real releases. The gentler floor is deliberate.
+  Nyaa.si:
+    enable: true
+    min_seeders: 5
+  # Priority-1 private tracker, disabled on 2026-09-04 after its login expired
+  # (PET-325). It was never implicated in the fakes, so its seeder floor stays
+  # unmanaged.
+  leech24:
+    enable: false

@@ -1,0 +1,107 @@
+# Regression test for roles/servarr/tasks/indexer-drift.yml, the comparison that
+# decides which Prowlarr indexers tasks/indexers.yml writes back (PET-296).
+#
+#   cd ansible
+#   ansible-playbook tests/prowlarr-indexer-drift.yml
+#
+# Runs on localhost and touches nothing. Each case starts from
+# fixtures/prowlarr-indexers.json, a GET /api/v1/indexer answer shaped like
+# Prowlarr v1's and matching the settings the vault records, edits it, and
+# asserts which indexers the drift would PUT and with what.
+#
+# Expect two 'fatal' lines and rescued=2 in the recap: the missing-name and
+# shared-name cases, each caught so the test can assert on its message rather
+# than end the run.
+#
+# WHAT IT EXISTS TO CATCH. PUT replaces the whole indexer, so a PUT built wrong
+# can change far more than one flag. Every case also checks that each PUT object
+# equals the live object in every key but `enable` and the seeder field's value.
+- name: Prowlarr indexer drift — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../roles/servarr/defaults/main.yml
+  vars:
+    indexer_fixture: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/prowlarr-indexers.json') | from_json }}"
+    # The same shape as inventory/host_vars/prowlarr.yml, kept apart so that
+    # re-enabling LimeTorrents there stays a one-line change.
+    declared: &declared
+      LimeTorrents: {enable: false, min_seeders: 10}
+      The Pirate Bay: {enable: true, min_seeders: 10}
+      Nyaa.si: {enable: true, min_seeders: 5}
+      leech24: {enable: false}
+    drift_cases:
+      - name: live matches the declaration
+        want_puts: {}
+
+      - name: nothing declared
+        declare: {}
+        edit:
+          LimeTorrents: {enable: true}
+        want_puts: {}
+
+      - name: LimeTorrents re-enabled live
+        edit:
+          LimeTorrents: {enable: true}
+        want_puts:
+          LimeTorrents: {enable: false, seeders: 10}
+
+      - name: The Pirate Bay floor lowered live
+        edit:
+          The Pirate Bay: {seeders: 3}
+        want_puts:
+          The Pirate Bay: {enable: true, seeders: 10}
+
+      # Prowlarr omits `value` for an unset field, so an unset floor is drift.
+      - name: Nyaa.si floor unset live
+        edit:
+          Nyaa.si: {seeders: unset}
+        want_puts:
+          Nyaa.si: {enable: true, seeders: 5}
+
+      - name: both settings drift on one indexer
+        edit:
+          The Pirate Bay: {enable: false, seeders: 1}
+        want_puts:
+          The Pirate Bay: {enable: true, seeders: 10}
+
+      # leech24 declares no min_seeders, so its floor is never compared or written.
+      - name: leech24 floor set live, and unmanaged
+        edit:
+          leech24: {seeders: 3}
+        want_puts: {}
+
+      - name: leech24 re-enabled live, floor left as it is
+        edit:
+          leech24: {enable: true, seeders: 3}
+        want_puts:
+          leech24: {enable: false, seeders: 3}
+
+      - name: a declared indexer is missing from Prowlarr
+        drop: [Nyaa.si]
+        edit:
+          LimeTorrents: {enable: true}
+        want_failed: true
+        want_msg_has: Prowlarr has no indexer named ["Nyaa.si"]
+
+      # Two live indexers answer to one declared name, so the PUT has no target.
+      - name: two live indexers share a declared name
+        duplicate: The Pirate Bay
+        want_failed: true
+        want_msg_has: Prowlarr has more than one named ["The Pirate Bay"]
+  tasks:
+    - name: The fixture holds the four declared indexers
+      ansible.builtin.assert:
+        that:
+          - indexer_fixture | map(attribute='name') | sort == declared.keys() | sort
+        fail_msg: "The fixture names {{ indexer_fixture | map(attribute='name') | list }}."
+        quiet: true
+
+    - name: Judge each recorded answer
+      ansible.builtin.include_tasks: cases/prowlarr-indexer-drift-case.yml
+      loop: "{{ drift_cases }}"
+      loop_control:
+        loop_var: drift_case
+        label: "{{ drift_case.name }}"

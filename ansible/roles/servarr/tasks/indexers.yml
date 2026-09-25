@@ -1,0 +1,68 @@
+# servarr — converge Prowlarr's indexer settings to `servarr_indexers` (PET-296).
+# tasks/main.yml includes this file only when `servarr_indexers` is non-empty, so
+# sonarr and radarr never reach it. The data shape is Prowlarr's v1 API.
+#
+# NOTHING APPLIES THIS ON MERGE. media-iac runs no Ansible from a push: the
+# terraform workflow ignores ansible/**, and ansible-tests runs only the
+# connection-local tests. Someone with SSH to CT 109 applies it by hand, from
+# ansible/, dry run first:
+#
+#   ansible-playbook -i inventory/hosts.yml playbooks/media-roles.yml \
+#     --limit prowlarr --check --diff
+#
+# Expect that first run to report no drift: the declaration matches the live
+# state the vault note Practices/indexers-and-fake-releases.md records. Under
+# --check the GET runs and the PUT does not. To leave indexers alone on a run,
+# pass --skip-tags indexers.
+#
+# The flow is read, compare, write only the difference: GET every indexer, work
+# out which declared ones drift (tasks/indexer-drift.yml), and PUT each of those
+# back as the full object Prowlarr returned, changed only where it differs.
+---
+- name: "{{ servarr_app }} — read the indexer list"
+  ansible.builtin.uri:
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/indexer"
+    headers:
+      X-Api-Key: "{{ servarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: servarr_indexer_get
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "{{ servarr_app }} — keep the live indexer list"
+  ansible.builtin.set_fact:
+    servarr_indexers_live: "{{ servarr_indexer_get.json }}"
+  no_log: true
+
+- name: "{{ servarr_app }} — work out which declared indexers drift"
+  ansible.builtin.include_tasks: indexer-drift.yml
+
+# Names and values only. The objects themselves can hold a private tracker's
+# login, so the report never prints one.
+- name: "{{ servarr_app }} — report indexer drift"
+  ansible.builtin.debug:
+    msg: >-
+      {{ servarr_indexer_drift if servarr_indexer_drift | length > 0
+         else 'No drift in the ' ~ servarr_indexers | length ~ ' declared indexers.' }}
+
+# PUT runs Prowlarr's connection test for an enabled indexer and refuses the save
+# when the test fails. That refusal fails this task, which is the loud result you
+# want: an indexer that cannot answer should not be quietly re-enabled.
+- name: "{{ servarr_app }} — write each drifting indexer"
+  ansible.builtin.uri:
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/indexer/{{ servarr_put.id }}"
+    method: PUT
+    headers:
+      X-Api-Key: "{{ servarr_api_key }}"
+    body_format: json
+    body: "{{ servarr_put }}"
+    status_code: [200, 202]
+    timeout: 60
+  loop: "{{ servarr_indexer_puts }}"
+  loop_control:
+    loop_var: servarr_put
+    label: "{{ servarr_put.name }}"
+  changed_when: true
+  no_log: true

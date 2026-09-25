@@ -40,6 +40,17 @@
           | regex_search('<Port>([^<]+)</Port>', '\1') | first) }}
   no_log: true
 
+# ---------------------------------------------------------------- indexers --
+# Declared Prowlarr indexer settings (PET-296). Empty for sonarr and radarr, so
+# the include never runs there. See tasks/indexers.yml.
+- name: "{{ servarr_app }} — converge the declared indexer settings"
+  ansible.builtin.include_tasks:
+    file: indexers.yml
+    apply:
+      tags: [indexers]
+  when: (servarr_indexers | default({}) | length) > 0
+  tags: [indexers]
+
 # ------------------------------------------------------------ version state --
 # /api/<v>/update returns the release feed newest-first, each entry flagged
 # installed / installable / latest. `installable: true` is the app's own verdict

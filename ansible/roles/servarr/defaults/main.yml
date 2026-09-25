@@ -22,3 +22,18 @@ servarr_api_host: "127.0.0.1"
 # lands well inside 5 minutes, but Lidarr/Radarr do a DB migration on first boot.
 servarr_update_wait_retries: 40
 servarr_update_wait_delay: 15
+
+# Declared Prowlarr indexer settings, keyed by the indexer's `name` as Prowlarr
+# shows it (PET-296). Empty means "manage no indexer", so sonarr and radarr never
+# include tasks/indexers.yml. prowlarr sets it in inventory/host_vars/prowlarr.yml,
+# which also says why each value is what it is.
+#
+# Each entry takes `enable` (required) and `min_seeders` (optional). Leave
+# `min_seeders` out and the role never reads or writes that indexer's floor.
+servarr_indexers: {}
+
+# The field inside an indexer's `fields` list that holds its minimum seeders.
+# Prowlarr builds the name from IndexerTorrentBaseSettings.AppMinimumSeeders,
+# nested under the settings' TorrentBaseSettings property (Prowlarr's
+# SchemaBuilder camel-cases both and joins them with a dot).
+servarr_indexer_seeders_field: "torrentBaseSettings.appMinimumSeeders"

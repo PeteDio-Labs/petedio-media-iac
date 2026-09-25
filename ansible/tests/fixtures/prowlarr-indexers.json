@@ -1,0 +1,662 @@
+[
+  {
+    "indexerUrls": [
+      "https://leech24.net/"
+    ],
+    "legacyUrls": [],
+    "definitionName": "leech24",
+    "description": "",
+    "language": "en-US",
+    "enable": false,
+    "redirect": false,
+    "supportsRss": true,
+    "supportsSearch": true,
+    "supportsRedirect": false,
+    "supportsPagination": false,
+    "appProfileId": 1,
+    "protocol": "torrent",
+    "privacy": "private",
+    "capabilities": {
+      "limitsMax": 100,
+      "limitsDefault": 100,
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": []
+        }
+      ],
+      "supportsRawSearch": false,
+      "searchParams": [
+        "q"
+      ],
+      "tvSearchParams": [
+        "q",
+        "season",
+        "ep"
+      ],
+      "movieSearchParams": [
+        "q"
+      ],
+      "musicSearchParams": [],
+      "bookSearchParams": []
+    },
+    "priority": 1,
+    "downloadClientId": 0,
+    "added": "2026-09-04T21:10:02Z",
+    "sortName": "leech24",
+    "name": "leech24",
+    "fields": [
+      {
+        "order": 0,
+        "name": "definitionFile",
+        "label": "",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "leech24",
+        "hidden": "hidden"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "label": "Base Url",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "https://leech24.net/"
+      },
+      {
+        "order": 2,
+        "name": "username",
+        "label": "Username",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "PET296-dummy-user"
+      },
+      {
+        "order": 3,
+        "name": "password",
+        "label": "Password",
+        "type": "password",
+        "advanced": false,
+        "privacy": "password",
+        "isFloat": false,
+        "value": "********"
+      },
+      {
+        "order": 4,
+        "name": "baseSettings.queryLimit",
+        "label": "Query Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 5,
+        "name": "baseSettings.grabLimit",
+        "label": "Grab Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 6,
+        "name": "baseSettings.limitsUnit",
+        "label": "Limits Unit",
+        "type": "select",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 7,
+        "name": "torrentBaseSettings.appMinimumSeeders",
+        "label": "Apps Minimum Seeders",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 8,
+        "name": "torrentBaseSettings.seedRatio",
+        "label": "Seed Ratio",
+        "type": "number",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": true
+      },
+      {
+        "order": 9,
+        "name": "torrentBaseSettings.seedTime",
+        "label": "Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 10,
+        "name": "torrentBaseSettings.packSeedTime",
+        "label": "Pack Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 11,
+        "name": "torrentBaseSettings.preferMagnetUrl",
+        "label": "Prefer Magnet URL",
+        "type": "checkbox",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": false
+      }
+    ],
+    "implementationName": "Cardigann",
+    "implementation": "Cardigann",
+    "configContract": "CardigannSettings",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#leech24",
+    "tags": [],
+    "presets": [],
+    "id": 1
+  },
+  {
+    "indexerUrls": [
+      "https://www.limetorrents.lol/"
+    ],
+    "legacyUrls": [],
+    "definitionName": "limetorrents",
+    "description": "",
+    "language": "en-US",
+    "enable": false,
+    "redirect": false,
+    "supportsRss": true,
+    "supportsSearch": true,
+    "supportsRedirect": false,
+    "supportsPagination": false,
+    "appProfileId": 1,
+    "protocol": "torrent",
+    "privacy": "public",
+    "capabilities": {
+      "limitsMax": 100,
+      "limitsDefault": 100,
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": []
+        }
+      ],
+      "supportsRawSearch": false,
+      "searchParams": [
+        "q"
+      ],
+      "tvSearchParams": [
+        "q",
+        "season",
+        "ep"
+      ],
+      "movieSearchParams": [
+        "q"
+      ],
+      "musicSearchParams": [],
+      "bookSearchParams": []
+    },
+    "priority": 25,
+    "downloadClientId": 0,
+    "added": "2026-09-04T21:12:40Z",
+    "sortName": "limetorrents",
+    "name": "LimeTorrents",
+    "fields": [
+      {
+        "order": 0,
+        "name": "definitionFile",
+        "label": "",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "limetorrents",
+        "hidden": "hidden"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "label": "Base Url",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "https://www.limetorrents.lol/"
+      },
+      {
+        "order": 2,
+        "name": "baseSettings.queryLimit",
+        "label": "Query Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 3,
+        "name": "baseSettings.grabLimit",
+        "label": "Grab Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 4,
+        "name": "baseSettings.limitsUnit",
+        "label": "Limits Unit",
+        "type": "select",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 5,
+        "name": "torrentBaseSettings.appMinimumSeeders",
+        "label": "Apps Minimum Seeders",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 10
+      },
+      {
+        "order": 6,
+        "name": "torrentBaseSettings.seedRatio",
+        "label": "Seed Ratio",
+        "type": "number",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": true
+      },
+      {
+        "order": 7,
+        "name": "torrentBaseSettings.seedTime",
+        "label": "Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 8,
+        "name": "torrentBaseSettings.packSeedTime",
+        "label": "Pack Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 9,
+        "name": "torrentBaseSettings.preferMagnetUrl",
+        "label": "Prefer Magnet URL",
+        "type": "checkbox",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": false
+      },
+      {
+        "order": 10,
+        "name": "downloadlink",
+        "label": "Download link",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 1
+      },
+      {
+        "order": 11,
+        "name": "sort",
+        "label": "Sort requested from site",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      }
+    ],
+    "implementationName": "Cardigann",
+    "implementation": "Cardigann",
+    "configContract": "CardigannSettings",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#limetorrents",
+    "tags": [],
+    "presets": [],
+    "id": 3
+  },
+  {
+    "indexerUrls": [
+      "https://thepiratebay.org/"
+    ],
+    "legacyUrls": [],
+    "definitionName": "thepiratebay",
+    "description": "",
+    "language": "en-US",
+    "enable": true,
+    "redirect": false,
+    "supportsRss": true,
+    "supportsSearch": true,
+    "supportsRedirect": false,
+    "supportsPagination": false,
+    "appProfileId": 1,
+    "protocol": "torrent",
+    "privacy": "public",
+    "capabilities": {
+      "limitsMax": 100,
+      "limitsDefault": 100,
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": []
+        }
+      ],
+      "supportsRawSearch": false,
+      "searchParams": [
+        "q"
+      ],
+      "tvSearchParams": [
+        "q",
+        "season",
+        "ep"
+      ],
+      "movieSearchParams": [
+        "q"
+      ],
+      "musicSearchParams": [],
+      "bookSearchParams": []
+    },
+    "priority": 25,
+    "downloadClientId": 0,
+    "added": "2026-09-04T21:13:05Z",
+    "sortName": "thepiratebay",
+    "name": "The Pirate Bay",
+    "fields": [
+      {
+        "order": 0,
+        "name": "baseUrl",
+        "label": "Base Url",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "https://thepiratebay.org/"
+      },
+      {
+        "order": 1,
+        "name": "baseSettings.queryLimit",
+        "label": "Query Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 2,
+        "name": "baseSettings.grabLimit",
+        "label": "Grab Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 3,
+        "name": "baseSettings.limitsUnit",
+        "label": "Limits Unit",
+        "type": "select",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 4,
+        "name": "torrentBaseSettings.appMinimumSeeders",
+        "label": "Apps Minimum Seeders",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 10
+      },
+      {
+        "order": 5,
+        "name": "torrentBaseSettings.seedRatio",
+        "label": "Seed Ratio",
+        "type": "number",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": true
+      },
+      {
+        "order": 6,
+        "name": "torrentBaseSettings.seedTime",
+        "label": "Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 7,
+        "name": "torrentBaseSettings.packSeedTime",
+        "label": "Pack Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 8,
+        "name": "torrentBaseSettings.preferMagnetUrl",
+        "label": "Prefer Magnet URL",
+        "type": "checkbox",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": false
+      }
+    ],
+    "implementationName": "ThePirateBay",
+    "implementation": "ThePirateBay",
+    "configContract": "NoAuthTorrentBaseSettings",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#thepiratebay",
+    "tags": [],
+    "presets": [],
+    "id": 4
+  },
+  {
+    "indexerUrls": [
+      "https://nyaa.si/"
+    ],
+    "legacyUrls": [],
+    "definitionName": "nyaasi",
+    "description": "",
+    "language": "en-US",
+    "enable": true,
+    "redirect": false,
+    "supportsRss": true,
+    "supportsSearch": true,
+    "supportsRedirect": false,
+    "supportsPagination": false,
+    "appProfileId": 1,
+    "protocol": "torrent",
+    "privacy": "public",
+    "capabilities": {
+      "limitsMax": 100,
+      "limitsDefault": 100,
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": []
+        }
+      ],
+      "supportsRawSearch": false,
+      "searchParams": [
+        "q"
+      ],
+      "tvSearchParams": [
+        "q",
+        "season",
+        "ep"
+      ],
+      "movieSearchParams": [
+        "q"
+      ],
+      "musicSearchParams": [],
+      "bookSearchParams": []
+    },
+    "priority": 25,
+    "downloadClientId": 0,
+    "added": "2026-09-04T21:13:31Z",
+    "sortName": "nyaasi",
+    "name": "Nyaa.si",
+    "fields": [
+      {
+        "order": 0,
+        "name": "definitionFile",
+        "label": "",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "nyaasi",
+        "hidden": "hidden"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "label": "Base Url",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "https://nyaa.si/"
+      },
+      {
+        "order": 2,
+        "name": "baseSettings.queryLimit",
+        "label": "Query Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 3,
+        "name": "baseSettings.grabLimit",
+        "label": "Grab Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 4,
+        "name": "baseSettings.limitsUnit",
+        "label": "Limits Unit",
+        "type": "select",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 5,
+        "name": "torrentBaseSettings.appMinimumSeeders",
+        "label": "Apps Minimum Seeders",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 5
+      },
+      {
+        "order": 6,
+        "name": "torrentBaseSettings.seedRatio",
+        "label": "Seed Ratio",
+        "type": "number",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": true
+      },
+      {
+        "order": 7,
+        "name": "torrentBaseSettings.seedTime",
+        "label": "Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 8,
+        "name": "torrentBaseSettings.packSeedTime",
+        "label": "Pack Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 9,
+        "name": "torrentBaseSettings.preferMagnetUrl",
+        "label": "Prefer Magnet URL",
+        "type": "checkbox",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": false
+      },
+      {
+        "order": 10,
+        "name": "cat-id",
+        "label": "Category",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 11,
+        "name": "prefer_magnet_links",
+        "label": "Prefer magnet links",
+        "type": "checkbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": true
+      }
+    ],
+    "implementationName": "Cardigann",
+    "implementation": "Cardigann",
+    "configContract": "CardigannSettings",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#nyaasi",
+    "tags": [],
+    "presets": [],
+    "id": 5
+  }
+]
