@@ -32,12 +32,21 @@ Start here for media work:
 | `Practices/ssh-keys-two-hops.md` | Which key gets you where |
 
 ⚠ **A large amount of live media behaviour is configured through app APIs and
-exists nowhere in git** — Prowlarr's indexer set (enable/disable, priority,
-minimum seeders), qBittorrent's share limits and `preallocate_all`, Sonarr's
-quality profiles. Ansible does **not** manage any of it.
+exists nowhere in git** — Prowlarr's indexer priorities, qBittorrent's share
+limits and `preallocate_all`, Sonarr's quality profiles. Ansible does **not**
+manage any of it.
 This is a real drift class: a rebuild silently restores old behaviour, and the
 only record that a setting was ever chosen deliberately is the vault note. When
 you change one of these live, write it down there — nothing else will.
+
+**Prowlarr's indexer enable flags and minimum seeders left that list in
+PET-296.** They are `servarr_indexers` in `inventory/host_vars/prowlarr.yml`.
+Management is opt-in: the role tags the indexer include `never`, so an update run
+never touches indexers. Apply it from `ansible/` with
+`ansible-playbook playbooks/media-roles.yml --limit prowlarr --tags indexers`,
+and add `--check --diff` for a read-only drift report. A change made in the
+Prowlarr UI to a declared indexer lasts until the next such run, so declare it in
+`servarr_indexers` as well.
 
 **The VPN exit country left that list in PET-295.** It lived only in the host's
 uncommitted `.env`, so the real exit country existed nowhere in git; it is now

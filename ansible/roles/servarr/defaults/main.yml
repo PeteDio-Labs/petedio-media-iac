@@ -30,6 +30,9 @@ servarr_update_wait_delay: 15
 #
 # Each entry takes `enable` (required) and `min_seeders` (optional). Leave
 # `min_seeders` out and the role never reads or writes that indexer's floor.
+#
+# Opt-in: tasks/main.yml tags the include `never`, so the role touches indexers
+# only on a run that passes `--tags indexers`. A version update never does.
 servarr_indexers: {}
 
 # The field inside an indexer's `fields` list that holds its minimum seeders.

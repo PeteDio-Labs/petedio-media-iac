@@ -4,16 +4,17 @@
 #
 # NOTHING APPLIES THIS ON MERGE. media-iac runs no Ansible from a push: the
 # terraform workflow ignores ansible/**, and ansible-tests runs only the
-# connection-local tests. Someone with SSH to CT 109 applies it by hand, from
-# ansible/, dry run first:
+# connection-local tests. It is also opt-in: tasks/main.yml tags the include
+# `never`, so only a run that passes `--tags indexers` reaches this file, and an
+# update run never does. Someone with SSH to CT 109 applies it by hand, from
+# ansible/:
 #
-#   ansible-playbook -i inventory/hosts.yml playbooks/media-roles.yml \
-#     --limit prowlarr --check --diff
+#   ansible-playbook playbooks/media-roles.yml --limit prowlarr --tags indexers
 #
-# Expect that first run to report no drift: the declaration matches the live
-# state the vault note Practices/indexers-and-fake-releases.md records. Under
-# --check the GET runs and the PUT does not. To leave indexers alone on a run,
-# pass --skip-tags indexers.
+# Add `--check --diff` for a read-only drift report, and run that first. Expect
+# it to report no drift: the declaration matches the live state the vault note
+# Practices/indexers-and-fake-releases.md records. Under --check the GET runs and
+# the PUT does not.
 #
 # The flow is read, compare, write only the difference: GET every indexer, work
 # out which declared ones drift (tasks/indexer-drift.yml), and PUT each of those

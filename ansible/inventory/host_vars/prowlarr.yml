@@ -37,10 +37,12 @@ media_base_masked_units: []
 # name and writes only the ones that differ. It fails when a name here is missing
 # from Prowlarr, rather than skipping it.
 #
-# Nothing applies this on merge: media-iac runs no Ansible from a push. To apply
-# it, run from ansible/ with SSH to CT 109, dry run first:
-#   ansible-playbook -i inventory/hosts.yml playbooks/media-roles.yml \
-#     --limit prowlarr --check --diff
+# Nothing applies this on merge: media-iac runs no Ansible from a push. It is
+# also opt-in: the role tags the indexer include `never`, so an update run,
+# including one started from Discord, never touches indexers. To apply it, run
+# from ansible/ with SSH to CT 109. Add `--check --diff` first for a read-only
+# drift report:
+#   ansible-playbook playbooks/media-roles.yml --limit prowlarr --tags indexers
 servarr_indexers:
   # Disabled on 2026-08-14: it served fake `.exe` releases that filled the
   # downloads volume. ⚠ That cost coverage. LimeTorrents grabbed 10 of the 12

@@ -23,12 +23,18 @@
 # ---------------------------------------------------------------- discovery --
 # The API key and port are whatever the running app decided; read them rather
 # than pinning them in inventory, so a port change on the host can't desync us.
+#
+# Both tasks carry the `indexers` tag because the indexer include needs the key
+# and the port. Without it, `--tags indexers` skips them and the include fails on
+# an undefined servarr_api_key. The tag adds them to that run and takes them out
+# of no other.
 - name: "{{ servarr_app }} — read config.xml"
   ansible.builtin.slurp:
     src: "{{ servarr_data_dir }}/config.xml"
   register: servarr_config_raw
   check_mode: false
   no_log: true
+  tags: [indexers]
 
 - name: "{{ servarr_app }} — extract API key and port"
   ansible.builtin.set_fact:
@@ -39,17 +45,26 @@
       {{ (servarr_config_raw.content | b64decode
           | regex_search('<Port>([^<]+)</Port>', '\1') | first) }}
   no_log: true
+  tags: [indexers]
 
 # ---------------------------------------------------------------- indexers --
 # Declared Prowlarr indexer settings (PET-296). Empty for sonarr and radarr, so
 # the include never runs there. See tasks/indexers.yml.
+#
+# Opt-in: the `never` tag keeps this include out of every run that does not pass
+# `--tags indexers`. update-media.yml imports this role, and media-updates.yml
+# runs it from Discord, so without `never` a version update would also write
+# indexer drift back and undo a same-day change made in the Prowlarr UI. From
+# ansible/, add `--check --diff` for a read-only drift report:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit prowlarr --tags indexers
 - name: "{{ servarr_app }} — converge the declared indexer settings"
   ansible.builtin.include_tasks:
     file: indexers.yml
     apply:
-      tags: [indexers]
+      tags: [indexers, never]
   when: (servarr_indexers | default({}) | length) > 0
-  tags: [indexers]
+  tags: [indexers, never]
 
 # ------------------------------------------------------------ version state --
 # /api/<v>/update returns the release feed newest-first, each entry flagged
