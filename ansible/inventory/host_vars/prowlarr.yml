@@ -52,15 +52,20 @@ servarr_indexers:
   LimeTorrents:
     enable: false
     min_seeders: 10
-  # The remaining public source for US network TV. A floor of 10 seeders rejects
-  # the low-seeded fakes.
+  # The only enabled source since 2026-10-02, and the one US network TV relies on.
+  # A floor of 10 seeders rejects low-seeded fakes, but not the 2026-09-29 fakes
+  # below, which advertised thousands. ⚠ Every show is now single-homed here, so
+  # when TPB fails, nothing arrives (the 2026-08-17 Big Brother outage).
   The Pirate Bay:
     enable: true
     min_seeders: 10
-  # Anime is niche and legitimately thin on seeders, so a public-tracker floor
-  # would reject real releases. The gentler floor is deliberate.
+  # Disabled on 2026-10-02 (PET-296): it served all three fake `.exe` releases
+  # grabbed on 2026-09-29, each a single 869 MB executable named as a US TV episode.
+  # It fed 7 of Sonarr's 369 grabs in the 30 days before, and the library holds no
+  # anime. If anime returns, re-enable it with this one line (`enable: true`). Anime is
+  # thin on seeders, so the gentler floor of 5 is deliberate.
   Nyaa.si:
-    enable: true
+    enable: false
     min_seeders: 5
   # Priority-1 private tracker, disabled on 2026-09-04 after its login expired
   # (PET-325). It was never implicated in the fakes, so its seeder floor stays
