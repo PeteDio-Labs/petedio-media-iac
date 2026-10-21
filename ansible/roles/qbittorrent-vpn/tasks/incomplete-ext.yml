@@ -1,0 +1,188 @@
+# incomplete-ext.yml — converge qBittorrent's `incomplete_files_ext` (PET-732).
+#
+# Opt-in: tasks/main.yml tags the include `never`, so only a run that passes
+# `--tags qbit_incomplete_ext` reaches this file. Nothing applies it on merge. Run it
+# from ansible/ with the stack idle:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit qbittorrent-vpn --tags qbit_incomplete_ext
+#
+# Add `--check --diff` first for a read-only drift report. Under --check the read runs
+# and the write does not.
+#
+# Why: see qbit_incomplete_files_ext in defaults/main.yml. Same in-namespace rule as
+# the speed-limit block: the WebUI answers only from inside gluetun's netns.
+#
+# ⚠ qBittorrent renames the files of torrents already in its list when this preference
+# changes. Do not run it while a torrent is unfinished or Plex is streaming. Two
+# guards refuse unless qbit_update_force is set:
+#   - any torrent below 100% or in a checking or moving state, paused ones included;
+#   - Plex 236 reporting a session, or not answering. Plex runs on another host, so
+#     the probe is delegated to plex-gpu and reuses the media-lifecycle classifier.
+# The write is read back, and the play fails when the preference did not take.
+---
+- name: qbit — read every torrent
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/torrents/info"
+  register: qbit_ie_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# A torrent is busy when it is unfinished (paused and stopped included, because the
+# rename touches their files too) or is checking or moving. A list that did not parse
+# counts as busy: "cannot tell" is not "nothing is running".
+- name: qbit — count busy torrents
+  ansible.builtin.set_fact:
+    qbit_ie_readable: "{{ (qbit_ie_active.stdout | default('') | trim).startswith('[') }}"
+    qbit_ie_busy: >-
+      {{ (qbit_ie_active.stdout | from_json
+          | selectattr('progress', 'lt', 1) | list | length
+          + qbit_ie_active.stdout | from_json
+          | selectattr('progress', 'ge', 1)
+          | selectattr('state', 'match', '^(checking|moving)') | list | length)
+         if (qbit_ie_active.stdout | default('') | trim).startswith('[') else -1 }}
+
+- name: qbit — REFUSING to change incomplete_files_ext, torrents are unfinished or unreadable
+  ansible.builtin.fail:
+    msg: >-
+      {{ 'Could not read the torrent list (rc=' ~ (qbit_ie_active.rc | default('?')) ~ ').'
+         if not (qbit_ie_readable | bool)
+         else (qbit_ie_busy | string) ~ ' torrent(s) are unfinished, checking or moving.' }}
+      Re-run with -e qbit_update_force=true to change the setting anyway.
+  when:
+    - not (qbit_update_force | bool)
+    - qbit_ie_busy | int != 0
+
+# Plex runs on plex-gpu, not here. Same probe as media-lifecycle/in-use-plex.yml,
+# delegated, and the same classifier. Anything but 'idle' refuses, including
+# 'unknown', because a Plex that did not answer is not a Plex with no viewers.
+- name: Plex — is the unit running?
+  ansible.builtin.command:
+    argv: [systemctl, is-active, plexmediaserver]
+  register: lifecycle_plex_unit
+  delegate_to: plex-gpu
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Plex — read PlexOnlineToken
+  ansible.builtin.slurp:
+    src: "{{ hostvars['plex-gpu'].plex_prefs_path }}"
+  register: lifecycle_plex_prefs
+  delegate_to: plex-gpu
+  when: (lifecycle_plex_unit.stdout | default('') | trim) == 'active'
+  check_mode: false
+  failed_when: false
+  no_log: true
+
+- name: Plex — count active playback sessions
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ hostvars['plex-gpu'].plex_port }}/status/sessions"
+    headers:
+      X-Plex-Token: >-
+        {{ (lifecycle_plex_prefs.content | default('') | b64decode
+            | regex_search('PlexOnlineToken="([^"]+)"', '\1') or ['']) | first }}
+    return_content: true
+    timeout: 15
+  register: lifecycle_plex_sessions
+  delegate_to: plex-gpu
+  when: (lifecycle_plex_unit.stdout | default('') | trim) == 'active'
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Plex — classify the probe
+  ansible.builtin.include_tasks: ../../media-lifecycle/tasks/classify-plex.yml
+
+- name: qbit — REFUSING to change incomplete_files_ext, Plex is streaming or unreadable
+  ansible.builtin.fail:
+    msg: >-
+      {{ media_in_use_reason }}. Re-run with -e qbit_update_force=true to change the
+      setting anyway.
+  when:
+    - not (qbit_update_force | bool)
+    - media_in_use_state != 'idle'
+
+- name: qbit — read preferences
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/app/preferences"
+  register: qbit_ie_prefs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: qbit — REFUSING to guess, preferences are unreadable
+  ansible.builtin.fail:
+    msg: >-
+      Could not read /app/preferences (rc={{ qbit_ie_prefs.rc | default('?') }}).
+      Nothing was changed.
+  when: >-
+    not (qbit_ie_prefs.stdout | default('') | trim).startswith('{')
+    or 'incomplete_files_ext' not in (qbit_ie_prefs.stdout | from_json)
+
+- name: qbit — report incomplete_files_ext drift
+  ansible.builtin.debug:
+    msg: >-
+      incomplete_files_ext {{ (qbit_ie_prefs.stdout | from_json).incomplete_files_ext }}
+      -> {{ qbit_incomplete_files_ext | bool }}
+
+- name: qbit — set incomplete_files_ext
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -fsS
+      - --max-time
+      - "15"
+      - --data-urlencode
+      - 'json={"incomplete_files_ext":{{ qbit_incomplete_files_ext | bool | lower }}}'
+      - "{{ qbit_api }}/api/v2/app/setPreferences"
+  when: (qbit_ie_prefs.stdout | from_json).incomplete_files_ext != (qbit_incomplete_files_ext | bool)
+  changed_when: true
+
+- name: qbit — read the preference back
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/app/preferences"
+  register: qbit_ie_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: (qbit_ie_prefs.stdout | from_json).incomplete_files_ext != (qbit_incomplete_files_ext | bool)
+
+- name: qbit — FAIL, incomplete_files_ext did not take
+  ansible.builtin.fail:
+    msg: >-
+      Wrote incomplete_files_ext={{ qbit_incomplete_files_ext | bool }} but it reads
+      back as "{{ (qbit_ie_after.stdout | default('') | trim)[:60] }}".
+  when:
+    - qbit_ie_after is not skipped
+    - >-
+      not (qbit_ie_after.stdout | default('') | trim).startswith('{')
+      or (qbit_ie_after.stdout | from_json).incomplete_files_ext != (qbit_incomplete_files_ext | bool)
