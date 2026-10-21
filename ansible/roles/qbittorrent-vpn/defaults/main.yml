@@ -144,3 +144,15 @@ qbit_up_limit: 0
 # Confirmed port-forward pools: US 182, Canada 28, UK 32, France 26, Germany 20,
 # Switzerland 18, Romania/Sweden 14, Netherlands/Poland/Singapore/Spain 12.
 proton_server_countries: Switzerland
+
+# ------------------------------------------------- incomplete-file extension --
+# PET-732. qBittorrent preallocates every file in a pack (`preallocate_all`), skipped
+# files included. When the wanted files finish, the torrent stops and Sonarr imports
+# every video file in the folder, so the skipped, mostly-zero files reach the
+# library. With `incomplete_files_ext` on, qBittorrent appends `.!qB` to a file until
+# it completes. Sonarr does not import `.!qB`, so a file that never finished cannot
+# be imported, and preallocation stays on.
+#
+# The setting lives only in qBittorrent's preferences, so tasks/incomplete-ext.yml
+# converges it. It is opt-in: `--tags qbit_incomplete_ext`.
+qbit_incomplete_files_ext: true

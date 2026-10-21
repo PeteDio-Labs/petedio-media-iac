@@ -48,6 +48,12 @@ and add `--check --diff` for a read-only drift report. A change made in the
 Prowlarr UI to a declared indexer lasts until the next such run, so declare it in
 `servarr_indexers` as well.
 
+**qBittorrent's `incomplete_files_ext` left that list in PET-732.** It stops Sonarr
+importing skipped, unfinished pack files: qBittorrent appends `.!qB` until a file
+completes. It is `qbit_incomplete_files_ext` in `roles/qbittorrent-vpn/defaults/main.yml`
+and is opt-in: `ansible-playbook playbooks/media-roles.yml --limit qbittorrent-vpn --tags qbit_incomplete_ext`,
+with `--check --diff` first, and only with 110 idle.
+
 **The VPN exit country left that list in PET-295.** It lived only in the host's
 uncommitted `.env`, so the real exit country existed nowhere in git; it is now
 `proton_server_countries` in `roles/qbittorrent-vpn/defaults/main.yml`, and

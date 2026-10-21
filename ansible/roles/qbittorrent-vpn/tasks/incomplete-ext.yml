@@ -1,0 +1,93 @@
+# incomplete-ext.yml — converge qBittorrent's `incomplete_files_ext` (PET-732).
+#
+# Opt-in: tasks/main.yml tags the include `never`, so only a run that passes
+# `--tags qbit_incomplete_ext` reaches this file. Nothing applies it on merge. Run it
+# from ansible/ with the stack idle:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit qbittorrent-vpn --tags qbit_incomplete_ext
+#
+# Add `--check --diff` first for a read-only drift report. Under --check the read runs
+# and the write does not.
+#
+# Why: see qbit_incomplete_files_ext in defaults/main.yml. Same in-namespace rule as
+# the speed-limit block: the WebUI answers only from inside gluetun's netns.
+#
+# ⚠ qBittorrent renames the files of torrents already in its list when this preference
+# changes. Do not run it while a download is in flight or Plex is streaming from the
+# staging volume. The guard below refuses unless qbit_update_force is set.
+---
+- name: qbit — read downloading torrents
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/torrents/info?filter=downloading"
+  register: qbit_ie_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: qbit — REFUSING to change incomplete_files_ext, transfer state is unknown or busy
+  ansible.builtin.fail:
+    msg: >-
+      {{ 'Could not read the torrent list (rc=' ~ (qbit_ie_active.rc | default('?')) ~ ').'
+         if not (qbit_ie_active.stdout | default('') | trim).startswith('[')
+         else (qbit_ie_active.stdout | from_json | length) ~ ' torrent(s) are downloading.' }}
+      Re-run with -e qbit_update_force=true to change the setting anyway.
+  when:
+    - not (qbit_update_force | bool)
+    - >-
+      not (qbit_ie_active.stdout | default('') | trim).startswith('[')
+      or (qbit_ie_active.stdout | from_json | length) > 0
+
+- name: qbit — read preferences
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -sS
+      - --max-time
+      - "15"
+      - "{{ qbit_api }}/api/v2/app/preferences"
+  register: qbit_ie_prefs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: qbit — REFUSING to guess, preferences are unreadable
+  ansible.builtin.fail:
+    msg: >-
+      Could not read /app/preferences (rc={{ qbit_ie_prefs.rc | default('?') }}).
+      Nothing was changed.
+  when: >-
+    not (qbit_ie_prefs.stdout | default('') | trim).startswith('{')
+    or 'incomplete_files_ext' not in (qbit_ie_prefs.stdout | from_json)
+
+- name: qbit — report incomplete_files_ext drift
+  ansible.builtin.debug:
+    msg: >-
+      incomplete_files_ext {{ (qbit_ie_prefs.stdout | from_json).incomplete_files_ext }}
+      -> {{ qbit_incomplete_files_ext | bool }}
+
+- name: qbit — set incomplete_files_ext
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ qbit_container }}"
+      - curl
+      - -fsS
+      - --max-time
+      - "15"
+      - --data-urlencode
+      - 'json={"incomplete_files_ext":{{ qbit_incomplete_files_ext | bool | lower }}}'
+      - "{{ qbit_api }}/api/v2/app/setPreferences"
+  when: (qbit_ie_prefs.stdout | from_json).incomplete_files_ext != (qbit_incomplete_files_ext | bool)
+  changed_when: true

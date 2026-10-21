@@ -224,6 +224,15 @@
       when: qbit_up_now | int != qbit_up_limit | int
       changed_when: true
 
+# ------------------------------------------------- incomplete-file extension --
+# Opt-in (PET-732): only `--tags qbit_incomplete_ext` reaches it. See the file.
+- name: qbit — converge incomplete_files_ext
+  ansible.builtin.include_tasks:
+    file: incomplete-ext.yml
+    apply:
+      tags: [qbit_incomplete_ext, never]
+  tags: [qbit_incomplete_ext, never]
+
 # ------------------------------------------------------------ version state --
 # `docker compose config --images` is the source of truth for what this stack
 # runs — no hardcoded image list to drift.
