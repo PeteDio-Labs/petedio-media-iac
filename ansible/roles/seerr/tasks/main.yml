@@ -72,18 +72,18 @@
   block:
     - name: seerr — gather mount facts for the space check
       ansible.builtin.setup:
-        filter: ansible_mounts
+        filter: mounts
       check_mode: false
 
     - name: seerr — require {{ seerr_min_free_mb }}MB free
       ansible.builtin.assert:
         that:
           - >-
-            (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available')
+            (ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | map(attribute='size_available')
              | first | default(0)) > (seerr_min_free_mb | int * 1048576)
         fail_msg: >-
           Not enough free space on / to build seerr
-          ({{ ((ansible_mounts | selectattr('mount','equalto','/') | map(attribute='size_available')
+          ({{ ((ansible_facts['mounts'] | selectattr('mount','equalto','/') | map(attribute='size_available')
                 | first | default(0)) / 1048576) | round | int }}MB free,
           need {{ seerr_min_free_mb }}MB). /root/seerr-*-backup.tgz is usually
           the thing worth deleting.
