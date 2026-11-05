@@ -114,6 +114,14 @@
       radarr-ip: "{{ hostvars['radarr'].ansible_host }}"
       radarr-port: "{{ bazarr_arr_apps.radarr.port }}"
       radarr-apikey: "{{ bazarr_arr_key.radarr }}"
+      # Plex refresh after each subtitle download (PET-863). The OAuth sign-in is not
+      # declared: Pedro makes it in Bazarr's UI, and tasks/config.yml checks it.
+      general-use_plex: true
+      plex-auth_method: oauth
+      plex-movie_library: "{{ bazarr_plex_movie_libraries }}"
+      plex-series_library: "{{ bazarr_plex_series_libraries }}"
+      plex-update_movie_library: true
+      plex-update_series_library: true
       opensubtitlescom-username: "{{ bazarr_os_username }}"
       opensubtitlescom-password: "{{ bazarr_os_password }}"
   no_log: true

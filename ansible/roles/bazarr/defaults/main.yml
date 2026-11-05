@@ -66,7 +66,6 @@ bazarr_profile_name: English
 # Bazarr's provider keys, in the order Bazarr tries them.
 bazarr_providers:
   - opensubtitlescom
-  - podnapisi
   - yifysubtitles
 
 # Sonarr and Radarr. The address comes from the inventory (`ansible_host`), the port is
@@ -78,6 +77,15 @@ bazarr_arr_apps:
   radarr:
     port: 7878
     config_dir: /var/lib/radarr
+
+# Plex. After each subtitle download, Bazarr refreshes that movie or episode in Plex
+# (PET-863). Plex cannot find a new subtitle by itself: inotify does not cross the NFS
+# mounts, and the hourly scan is only a backstop. Bazarr signs in to Plex with OAuth, which
+# Bazarr's docs make the default. Pedro signs in once in Bazarr's UI, under Settings >
+# Plex, so the token lives in Bazarr's config.yaml and nowhere in git.
+# Library names, not ids. tasks/config.yml fails when the signed-in server lacks a name.
+bazarr_plex_movie_libraries: [Movies]
+bazarr_plex_series_libraries: [TV Shows]
 
 # The OpenSubtitles.com login. tasks/vault.yml reads it on the controller, through the
 # `vault` CLI, as the `ansible` AppRole, whose policy reads kv/data/services/*.

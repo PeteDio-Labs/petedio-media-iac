@@ -211,6 +211,12 @@ the `ansible` AppRole files. To converge install and version while Vault is seal
 runs it. `scripts/lxc-mounts-222.sh` adds the `/mnt/media` bind, because Terraform
 cannot (`docs/GOTCHAS.md`, "Bazarr").
 
+**Bazarr refreshes the Plex item after each subtitle download** (PET-863), because Plex
+cannot find a new subtitle file on its own. The role declares the refresh flags and the
+library names. The Plex sign-in is OAuth, which Pedro makes once in Bazarr under
+**Settings > Plex**. The `bazarr_config` run fails until Bazarr sees the `Movies` and
+`TV Shows` libraries through that sign-in.
+
 **Read `docs/GOTCHAS.md` before touching a role.** Three live traps:
 
 - Every role that asserts a baseline must **measure** it first — the `media-base`
