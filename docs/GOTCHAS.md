@@ -381,6 +381,11 @@ Two traps this sets:
 - **The unit passes `--no-update`, and the role sets `general.auto_update` to false.**
   Ansible owns the version. Without both, Bazarr's updater and the update report disagree
   about what is installed.
+- **A new container's apt lists are as old as its template.** `media-base` installs with
+  `update_cache: false`, so a check run never proposes an apt refresh. On a fresh guest
+  that asks the mirror for package builds it has since replaced, and the first run on 222
+  failed with `404 Not Found` for `curl`. To bootstrap a new guest, refresh the lists
+  once first: `ansible <host> -m ansible.builtin.apt -a update_cache=true`.
 - **Another repo declares 222 too.** `petedio-iac` holds `roles/lxc-features` and
   `roles/lxc-startup`, and the first fails on a container it does not name. Add 222 to
   both there.
