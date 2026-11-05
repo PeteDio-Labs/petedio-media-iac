@@ -303,6 +303,12 @@ module "radarr" {
 # The mount sits at /mnt/media, the same path sonarr and radarr use, so Bazarr needs no
 # path mapping. It has no /downloads mount: Bazarr reads the library and writes
 # subtitle files beside the media, and never touches a download.
+#
+# THE TEMPLATE IS SET HERE, NOT FROM THE MODULE DEFAULT. Templates are per-node files.
+# The module default, debian-13-standard_13.1-2, exists only on pve02, so the first
+# apply failed with "volume ... does not exist" (PET-852, run 41964860211). pve03 holds
+# 13.6-1. The module ignores template changes, so a later template bump never replaces
+# this guest.
 module "bazarr" {
   source = "../../modules/proxmox-lxc"
 
@@ -315,6 +321,7 @@ module "bazarr" {
   datastore_id     = "local" # pve03 has no thin pool; see PET-334
   ssh_public_key   = var.ssh_public_key
   target_node      = "pve03"
+  template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst" # pve03's only template
   description      = "Bazarr (subtitles). Media stack — managed by petedio-media-iac."
 }
 
