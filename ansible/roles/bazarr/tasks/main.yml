@@ -82,11 +82,23 @@
         remote_src: true
         creates: "{{ bazarr_install_dir }}/bazarr.py"
 
-    - name: bazarr — create the venv and install requirements
-      ansible.builtin.pip:
-        requirements: "{{ bazarr_install_dir }}/requirements.txt"
-        virtualenv: "{{ bazarr_venv_dir }}"
-        virtualenv_command: python3 -m venv
+# Outside the install block on purpose. The block runs only while bazarr.py is missing, so
+# a failed pip after a good unzip would never be retried, and the unit would crash-loop on
+# a venv that does not exist. This task keys on the venv's own interpreter.
+- name: bazarr — find the venv
+  ansible.builtin.stat:
+    path: "{{ bazarr_venv_dir }}/bin/python"
+  register: bazarr_venv
+  check_mode: false
+
+- name: bazarr — create the venv and install requirements
+  ansible.builtin.pip:
+    requirements: "{{ bazarr_install_dir }}/requirements.txt"
+    virtualenv: "{{ bazarr_venv_dir }}"
+    virtualenv_command: python3 -m venv
+  when:
+    - not bazarr_venv.stat.exists
+    - bazarr_installed.stat.exists or not ansible_check_mode
 
 - name: bazarr — systemd unit
   ansible.builtin.template:
@@ -128,7 +140,7 @@
     search_regex: 'apikey:'
     timeout: 120
   check_mode: false
-  tags: [bazarr_assign]
+  tags: [bazarr_config, bazarr_assign]
 
 - name: bazarr — wait for the port
   ansible.builtin.wait_for:
@@ -136,7 +148,7 @@
     port: "{{ bazarr_port }}"
     timeout: 180
   check_mode: false
-  tags: [bazarr_assign]
+  tags: [bazarr_config, bazarr_assign]
 
 - name: bazarr — read config.yaml
   ansible.builtin.slurp:
@@ -144,19 +156,19 @@
   register: bazarr_config_raw
   check_mode: false
   no_log: true
-  tags: [bazarr_assign]
+  tags: [bazarr_config, bazarr_assign]
 
 - name: bazarr — extract the API key
   ansible.builtin.set_fact:
     bazarr_api_key: "{{ (bazarr_config_raw.content | b64decode | from_yaml).auth.apikey | default('') }}"
   no_log: true
-  tags: [bazarr_assign]
+  tags: [bazarr_config, bazarr_assign]
 
 - name: bazarr — fail when the API key is empty
   ansible.builtin.assert:
     that: bazarr_api_key | length > 10
     fail_msg: "No usable auth.apikey in {{ bazarr_config_file }} on {{ inventory_hostname }}."
-  tags: [bazarr_assign]
+  tags: [bazarr_config, bazarr_assign]
 
 # ------------------------------------------------------------ version state --
 - name: bazarr — read the running version

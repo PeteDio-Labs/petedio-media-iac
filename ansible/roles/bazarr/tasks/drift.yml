@@ -31,6 +31,7 @@
   register: bazarr_profiles_cur
   changed_when: false
   check_mode: false
+  no_log: true
 
 - name: bazarr drift — read the languages
   ansible.builtin.uri:
@@ -47,6 +48,8 @@
 # The declared profile is one language, with hearing-impaired and forced subtitles not
 # required. A profile of this name that already exists keeps its id, so the default
 # profile settings never point at a number that changed.
+  no_log: true
+
 - name: bazarr drift — resolve the profile
   ansible.builtin.set_fact:
     bazarr_profile_cur: >-

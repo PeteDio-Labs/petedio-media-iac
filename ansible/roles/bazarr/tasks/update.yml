@@ -90,6 +90,9 @@
       failed_when: false
       changed_when: false
       no_log: true
+      # Under --check the extract and swap tasks skip, so the old version keeps answering
+      # and this poll would wait out its retries and send the run into the rescue.
+      when: not ansible_check_mode
 
     - name: bazarr — fail when it did not land on {{ bazarr_latest }}
       ansible.builtin.fail:
@@ -98,7 +101,9 @@
           {{ bazarr_start_wait_retries * bazarr_start_wait_delay }}s (last seen:
           {{ bazarr_post_update.json.data.bazarr_version | default('unreachable') }}).
           Rolling back to {{ bazarr_current }}. Check `journalctl -u {{ bazarr_service }}`.
-      when: bazarr_post_update.json.data.bazarr_version | default('') != bazarr_latest
+      when:
+        - not ansible_check_mode
+        - bazarr_post_update.json.data.bazarr_version | default('') != bazarr_latest
 
     - name: bazarr — drop the superseded tree
       ansible.builtin.file:

@@ -47,7 +47,6 @@ done
 
 command -v vault   >/dev/null 2>&1 || { echo "FATAL: vault CLI not found on PATH" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (needed to build JSON payloads)" >&2; exit 1; }
-command -v shasum  >/dev/null 2>&1 || { echo "FATAL: shasum not found on PATH (needed for the read-back digest)" >&2; exit 1; }
 
 # Vault seals nightly. Fail here rather than half-way through.
 if ! vault status >/dev/null 2>&1; then
@@ -82,7 +81,7 @@ load_value() {
 }
 
 # SHA-256 of a value via stdin, so it never reaches an argv.
-digest() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
+digest() { printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])'; }
 
 echo "Seeding ${SECRET_PATH} at ${VAULT_ADDR} ..."
 echo "(values are read from env or prompted silently; nothing is echoed or written to disk)"

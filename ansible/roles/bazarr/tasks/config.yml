@@ -30,10 +30,10 @@
     bazarr_arr_key:
       sonarr: >-
         {{ ((bazarr_arr_cfg.results | selectattr('item.key', 'equalto', 'sonarr') | first).content
-            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | first) }}
+            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([''], true) | first) }}
       radarr: >-
         {{ ((bazarr_arr_cfg.results | selectattr('item.key', 'equalto', 'radarr') | first).content
-            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | first) }}
+            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([''], true) | first) }}
   no_log: true
 
 - name: bazarr config — fail when a key is unusable
@@ -130,8 +130,50 @@
       settings API returns that value in another form.
   when: not ansible_check_mode
 
-# Bazarr names a failed Sonarr or Radarr connection in /api/system/health. An empty
-# list means the connections work; the retries cover the first sync after a write.
+# A connected Bazarr lists the library. Wait for it to, and fail when it does not, because
+# an empty health list right after a write only means Bazarr has not tried Sonarr or Radarr
+# yet, and a wrong API key would pass it. The first sync can take minutes. Set
+# bazarr_allow_empty_library to true only for a library that is empty on purpose.
+- name: bazarr config — wait for Bazarr to list the series and movies
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/{{ item }}?start=0&length=1"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  loop: [series, movies]
+  register: bazarr_counts
+  until: >-
+    bazarr_allow_empty_library | bool
+    or ((bazarr_counts.json.total | default(0) | int) > 0)
+  retries: 18
+  delay: 10
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr config — total the series and movies
+  ansible.builtin.set_fact:
+    bazarr_series_total: >-
+      {{ (bazarr_counts.results | selectattr('item', 'equalto', 'series') | first).json.total | default(0) | int }}
+    bazarr_movies_total: >-
+      {{ (bazarr_counts.results | selectattr('item', 'equalto', 'movies') | first).json.total | default(0) | int }}
+
+- name: bazarr config — fail when Bazarr lists nothing
+  ansible.builtin.assert:
+    that: >-
+      bazarr_allow_empty_library | bool
+      or (bazarr_series_total | int) + (bazarr_movies_total | int) > 0
+    fail_msg: >-
+      Bazarr lists {{ bazarr_series_total }} series and {{ bazarr_movies_total }} movies after
+      {{ 18 * 10 }}s. Either the first sync with Sonarr and Radarr is still running, or a
+      connection failed. Re-run this tag once the sync finishes, and read Bazarr's System >
+      Status page if it stays at 0.
+    success_msg: "Bazarr lists {{ bazarr_series_total }} series and {{ bazarr_movies_total }} movies."
+
+# Bazarr names a failed Sonarr or Radarr connection in /api/system/health. Read it after
+# the library lists, so an empty list now means the connections were tried.
 - name: bazarr config — read Bazarr's health
   ansible.builtin.uri:
     url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/health"
@@ -140,15 +182,17 @@
     return_content: true
     timeout: 30
   register: bazarr_health
-  until: >-
-    bazarr_health.json.data | default([])
-    | selectattr('object', 'search', '(?i)sonarr|radarr') | list | length == 0
-  retries: 6
-  delay: 10
   changed_when: false
   failed_when: false
   check_mode: false
   no_log: true
+
+- name: bazarr config — fail when the health read failed
+  ansible.builtin.fail:
+    msg: >-
+      /api/system/health on {{ inventory_hostname }} answered {{ bazarr_health.status | default('nothing') }}.
+      The connection check examined nothing.
+  when: bazarr_health.status | default(0) != 200
 
 - name: bazarr config — fail when Sonarr or Radarr is not connected
   ansible.builtin.assert:
@@ -159,32 +203,3 @@
       Bazarr reports a problem with Sonarr or Radarr:
       {{ bazarr_health.json.data | default([]) | selectattr('object', 'search', '(?i)sonarr|radarr')
          | map(attribute='issue') | join('; ') }}
-  when: bazarr_health.status | default(0) == 200
-
-- name: bazarr config — fail when the health read failed
-  ansible.builtin.fail:
-    msg: >-
-      /api/system/health on {{ inventory_hostname }} answered {{ bazarr_health.status | default('nothing') }}.
-      The connection check examined nothing.
-  when: bazarr_health.status | default(0) != 200
-
-# What the library holds, so a connected Bazarr with an empty list is visible.
-- name: bazarr config — count the series and movies Bazarr lists
-  ansible.builtin.uri:
-    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/{{ item }}?start=0&length=1"
-    headers:
-      X-API-KEY: "{{ bazarr_api_key }}"
-    return_content: true
-    timeout: 30
-  loop: [series, movies]
-  register: bazarr_counts
-  changed_when: false
-  check_mode: false
-
-- name: bazarr config — report the counts
-  ansible.builtin.debug:
-    msg: >-
-      Bazarr lists {{ (bazarr_counts.results | selectattr('item', 'equalto', 'series') | first).json.total | default('?') }} series
-      and {{ (bazarr_counts.results | selectattr('item', 'equalto', 'movies') | first).json.total | default('?') }} movies.
-      A first sync after a write can take minutes, so a count of 0 here means
-      "not synced yet", not "connected to nothing".

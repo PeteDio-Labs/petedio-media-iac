@@ -73,8 +73,11 @@ pve "mountpoint -q /mnt/media" || die "/mnt/media is not mounted on ${PVE_HOST}.
 printf '  /mnt/media is mounted on %s\n' "$PVE_HOST"
 
 CURRENT="$(pve "pct config ${VMID} | grep -E '^(mp[0-9]|features):' || true")"
+# Match nesting=1 as one member of the features list, so a later keyctl=1,nesting=1 from
+# petedio-iac's lxc-features role does not make every rerun restart the container.
+FEATURE_LINE="$(printf '%s\n' "$CURRENT" | sed -n 's/^features: //p')"
 if printf '%s\n' "$CURRENT" | grep -qxF "mp0: ${MP0}" \
-  && printf '%s\n' "$CURRENT" | grep -qxF "features: ${FEATURES}"; then
+  && case ",${FEATURE_LINE}," in *,"${FEATURES}",*) true ;; *) false ;; esac; then
   step "Already set, nothing to do"
   printf '%s\n' "$CURRENT"
   exit 0

@@ -54,6 +54,10 @@ bazarr_start_wait_delay: 10
 # tasks/config.yml converges these through Bazarr's settings API. Settings that
 # Bazarr's UI changes live outside git, so a rebuild would restore the defaults.
 
+# True only for a library that is empty on purpose. The config run fails when Bazarr lists
+# no series and no movies, because that is also what a wrong Sonarr key looks like.
+bazarr_allow_empty_library: false
+
 bazarr_language: en
 bazarr_profile_name: English
 
