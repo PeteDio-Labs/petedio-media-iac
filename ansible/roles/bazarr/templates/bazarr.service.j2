@@ -1,0 +1,21 @@
+# Managed by Ansible (roles/bazarr). Changes made here are overwritten.
+[Unit]
+Description=Bazarr (subtitles for Sonarr and Radarr)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={{ bazarr_install_dir }}
+# --no-update turns off Bazarr's own updater. Ansible owns the version, so the
+# update report and the service never disagree about what is installed.
+ExecStart={{ bazarr_venv_dir }}/bin/python {{ bazarr_install_dir }}/bazarr.py --no-update --config {{ bazarr_data_dir }} --port {{ bazarr_port }}
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+SyslogIdentifier={{ bazarr_service }}
+
+[Install]
+WantedBy=multi-user.target

@@ -28,6 +28,7 @@ locals {
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
     prowlarr        = module.prowlarr.vm_id
+    bazarr          = module.bazarr.vm_id
     qbittorrent_vpn = module.qbittorrent_vpn.vm_id
   } : {}
 }

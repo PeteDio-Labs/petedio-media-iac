@@ -6,9 +6,10 @@
 # Order is consumers-before-producers, so nothing is stopped mid-handoff:
 #
 #   1. plex + seerr      user-facing — stop first so nobody is cut off mid-action
-#   2. sonarr/radarr   importers — they consume from qBittorrent
-#   3. prowlarr          indexer — the *arr apps query it, so it outlives them
-#   4. qbittorrent-vpn   downloader — last, so imports upstream have settled
+#   2. bazarr            subtitles — it reads sonarr and radarr, so it stops before them
+#   3. sonarr/radarr   importers — they consume from qBittorrent
+#   4. prowlarr          indexer — the *arr apps query it, so it outlives them
+#   5. qbittorrent-vpn   downloader — last, so imports upstream have settled
 #
 # Plex and qBittorrent REFUSE to stop while genuinely in use (someone watching,
 # something downloading) and say so. Force with:
@@ -21,7 +22,7 @@
 # only Plex. Retargeted in PET-354 — the old value matched no host, and Ansible
 # skips an unmatched pattern with a warning, so the stack reported a clean
 # shutdown while Plex kept running.
-- name: Media stack down — 1/4 user-facing (plex-gpu, seerr)
+- name: Media stack down — 1/5 user-facing (plex-gpu, seerr)
   hosts: plex-gpu,seerr
   gather_facts: false
   vars:
@@ -29,7 +30,15 @@
   roles:
     - media-lifecycle
 
-- name: Media stack down — 2/4 importers (sonarr, radarr)
+- name: Media stack down — 2/5 subtitles (bazarr)
+  hosts: bazarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: stopped
+  roles:
+    - media-lifecycle
+
+- name: Media stack down — 3/5 importers (sonarr, radarr)
   hosts: sonarr,radarr
   gather_facts: false
   vars:
@@ -37,7 +46,7 @@
   roles:
     - media-lifecycle
 
-- name: Media stack down — 3/4 indexer (prowlarr)
+- name: Media stack down — 4/5 indexer (prowlarr)
   hosts: prowlarr
   gather_facts: false
   vars:
@@ -45,7 +54,7 @@
   roles:
     - media-lifecycle
 
-- name: Media stack down — 4/4 downloader (qbittorrent-vpn)
+- name: Media stack down — 5/5 downloader (qbittorrent-vpn)
   hosts: qbittorrent-vpn
   gather_facts: false
   vars:

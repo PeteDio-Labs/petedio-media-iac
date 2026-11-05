@@ -351,3 +351,36 @@ Two traps this sets:
   should use `docker exec` (what `scripts/api-capability-probe.sh` does). A LAN-origin
   request from another host would be covered by `192.168.50.0/24`, since Docker
   preserves the source IP for non-local traffic — but the host's own loopback is not.
+
+## Bazarr (PET-852)
+
+- **Terraform cannot create the library bind mount, so 222 is created bare.** Proxmox
+  checks `user == root@pam` for bind mount points, and the provider's token is
+  `root@pam!tokenid`. A create that carries `mount_points` fails with `Permission check
+  failed (mount point type bind is only allowed for root@pam)`. Sonarr and Radarr declare
+  theirs because the import adopted mounts that already existed. Run
+  `scripts/lxc-mounts-222.sh` after the apply creates the container and before
+  `media-roles.yml --limit bazarr`. The role refuses to run when `/mnt/media` is not a
+  mount point or is empty, because a Bazarr with no library starts, reports healthy and
+  finds nothing.
+- **The settings API is the only way to declare Bazarr's language profiles.** They live
+  in Bazarr's database, not in `config.yaml`. The role reads settings, profiles and
+  languages, writes the full declared state when any key differs, then reads it back and
+  fails if a key still differs. A `200` on the write proves nothing about what Bazarr
+  stored. The role logs the names of keys that differ, never their values, because the
+  values include the Sonarr and Radarr keys and the OpenSubtitles.com password.
+- **Bazarr applies the default profile to new items only.** A library that Sonarr and
+  Radarr held first has items with no profile, and Bazarr never searches for those. Run
+  `--tags bazarr_assign` once after the first sync. The tag is opt-in.
+- **The config tasks need Vault.** `--skip-tags bazarr_config` converges install and
+  version without it. The role reads the Sonarr and Radarr API keys from each app's
+  `config.xml` at run time and stores neither.
+- **Bazarr runs as root, like Sonarr and Radarr.** In an unprivileged LXC, root maps to
+  one host uid and the library is writable by that uid. A dedicated user maps to another
+  uid and cannot write `.srt` files beside the media.
+- **The unit passes `--no-update`, and the role sets `general.auto_update` to false.**
+  Ansible owns the version. Without both, Bazarr's updater and the update report disagree
+  about what is installed.
+- **Another repo declares 222 too.** `petedio-iac` holds `roles/lxc-features` and
+  `roles/lxc-startup`, and the first fails on a container it does not name. Add 222 to
+  both there.

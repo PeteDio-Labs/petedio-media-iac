@@ -9,13 +9,14 @@
 #   1. qbittorrent-vpn   the VPN tunnel must be up before anything expects downloads
 #   2. prowlarr          the *arr apps query it for indexers on startup
 #   3. sonarr/radarr
-#   4. seerr + plex      user-facing last, so the stack is whole when users arrive
+#   4. bazarr            reads the library through sonarr and radarr, so it starts after them
+#   5. seerr + plex      user-facing last, so the stack is whole when users arrive
 #
 # Each tier waits for its port to actually accept connections before the next
 # starts — "systemd says active" is not the same as "serving", and Lidarr in
 # particular runs a DB migration before it binds.
 ---
-- name: Media stack up — 1/4 downloader (qbittorrent-vpn)
+- name: Media stack up — 1/5 downloader (qbittorrent-vpn)
   hosts: qbittorrent-vpn
   gather_facts: false
   vars:
@@ -23,7 +24,7 @@
   roles:
     - media-lifecycle
 
-- name: Media stack up — 2/4 indexer (prowlarr)
+- name: Media stack up — 2/5 indexer (prowlarr)
   hosts: prowlarr
   gather_facts: false
   vars:
@@ -31,8 +32,16 @@
   roles:
     - media-lifecycle
 
-- name: Media stack up — 3/4 importers (sonarr, radarr)
+- name: Media stack up — 3/5 importers (sonarr, radarr)
   hosts: sonarr,radarr
+  gather_facts: false
+  vars:
+    media_lifecycle_state: started
+  roles:
+    - media-lifecycle
+
+- name: Media stack up — 4/5 subtitles (bazarr)
+  hosts: bazarr
   gather_facts: false
   vars:
     media_lifecycle_state: started
@@ -41,7 +50,7 @@
 
 # plex-gpu (236), not plex (103) — see the note in stack-down.yml. Retargeted in
 # PET-354; before that, stack-up never started Plex.
-- name: Media stack up — 4/4 user-facing (seerr, plex-gpu)
+- name: Media stack up — 5/5 user-facing (seerr, plex-gpu)
   hosts: seerr,plex-gpu
   gather_facts: false
   vars:

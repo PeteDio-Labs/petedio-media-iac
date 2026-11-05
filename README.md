@@ -62,6 +62,7 @@ ansible-playbook -i inventory/hosts.yml playbooks/update-media.yml --limit radar
 | Service | Mechanism | Notes |
 |---|---|---|
 | sonarr / radarr / prowlarr | the app's own `builtIn` updater, over its REST API | one `servarr` role; verifies it returns on the target version |
+| bazarr | GitHub release zip into `/opt/bazarr`, then a venv `pip install` | own `bazarr` role; verifies it returns on the target version, with rollback |
 | plex | apt (`repo.plex.tv`) | skips while anyone is watching |
 | seerr | GitHub source tag + `pnpm build` | opt-in; atomic tree swap with rollback |
 | qbittorrent-vpn | `docker compose pull` | skips while torrents are downloading; verifies VPN egress after |
@@ -169,6 +170,7 @@ host.
 | sonarr | 104 | .15 | pve03 | `local`; `/mnt/media` + `/downloads` are NFS binds from pve02 |
 | radarr | 105 | .16 | pve03 | same |
 | prowlarr | 109 | .20 | pve03 | same |
+| bazarr | 222 | .222 | pve03 | `local`; `/mnt/media` NFS bind from pve02, added by `scripts/lxc-mounts-222.sh`; no `/downloads` |
 | qbittorrent-vpn | 110 | .21 | pve02 | Gluetun/Proton; `local-lvm`; binds the ZFS pools directly |
 | plex-gpu | 236 | .236 | pve02 | replaced plex 103, which died with pve01 (2026-09-03); `/mnt/downloads` mounted ro |
 

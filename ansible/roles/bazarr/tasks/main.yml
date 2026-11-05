@@ -1,0 +1,220 @@
+# bazarr — install, run and update Bazarr on LXC 222, then converge its declared
+# config (PET-852).
+#
+# THREE JOBS, IN ORDER:
+#   1. install   a release zip in /opt/bazarr, a venv in /opt/bazarr-venv, a systemd unit.
+#   2. version   read the running version, compare it with the latest GitHub release,
+#                record the update report, and (media_update_apply) update.
+#   3. config    tasks/config.yml declares the language profile, providers and the
+#                Sonarr and Radarr connections.
+#
+# Read-only tasks carry `check_mode: false`, so `--check` still produces a real
+# version report instead of skipping the queries and reporting nothing.
+---
+# --------------------------------------------------------------- preflight --
+# Bazarr without the library is a service that starts, reports healthy, and finds
+# nothing. Refuse early. scripts/lxc-mounts-222.sh adds the bind.
+- name: bazarr — require the media library to be mounted and non-empty
+  ansible.builtin.shell:
+    cmd: "mountpoint -q {{ bazarr_media_root | quote }} && [ -n \"$(ls -A {{ bazarr_media_root | quote }} | head -n 1)\" ]"
+  register: bazarr_media_check
+  changed_when: false
+  failed_when: bazarr_media_check.rc != 0
+  check_mode: false
+
+# Queried from the control node: the LXC needs no reason to talk to the GitHub API
+# for a version question. seerr does the same.
+- name: bazarr — query the latest release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ bazarr_repo }}/releases/latest"
+    return_content: true
+    timeout: 30
+  register: bazarr_release
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: bazarr — resolve the latest version
+  ansible.builtin.set_fact:
+    bazarr_latest_tag: "{{ bazarr_release.json.tag_name | default('') }}"
+    bazarr_latest: "{{ bazarr_release.json.tag_name | default('') | regex_replace('^v', '') }}"
+
+# A release feed that answers with no tag must not read as "up to date".
+- name: bazarr — fail when the release feed named no version
+  ansible.builtin.assert:
+    that: bazarr_latest | length > 0
+    fail_msg: "GitHub returned no tag_name for {{ bazarr_repo }}. The version check examined nothing."
+
+# ----------------------------------------------------------------- install --
+- name: bazarr — find the install
+  ansible.builtin.stat:
+    path: "{{ bazarr_install_dir }}/bazarr.py"
+  register: bazarr_installed
+  check_mode: false
+
+- name: bazarr — packages present
+  ansible.builtin.apt:
+    name: "{{ bazarr_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: bazarr — data directory present
+  ansible.builtin.file:
+    path: "{{ bazarr_data_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: bazarr — install the release zip
+  when: not bazarr_installed.stat.exists
+  block:
+    - name: bazarr — install directory present
+      ansible.builtin.file:
+        path: "{{ bazarr_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: bazarr — fetch and extract {{ bazarr_latest_tag }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/{{ bazarr_repo }}/releases/download/{{ bazarr_latest_tag }}/bazarr.zip"
+        dest: "{{ bazarr_install_dir }}"
+        remote_src: true
+        creates: "{{ bazarr_install_dir }}/bazarr.py"
+
+    - name: bazarr — create the venv and install requirements
+      ansible.builtin.pip:
+        requirements: "{{ bazarr_install_dir }}/requirements.txt"
+        virtualenv: "{{ bazarr_venv_dir }}"
+        virtualenv_command: python3 -m venv
+
+- name: bazarr — systemd unit
+  ansible.builtin.template:
+    src: bazarr.service.j2
+    dest: "/etc/systemd/system/{{ bazarr_service }}.service"
+    mode: "0644"
+  register: bazarr_unit
+
+- name: bazarr — service enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ bazarr_service }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ bazarr_unit is changed }}"
+
+# `--check` on a host that has no install cannot read a version, a key or a port.
+# Say so in the report instead of failing on the first read.
+- name: bazarr — record the report for a host not yet installed
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: bazarr
+      mechanism: "github-release-zip"
+      current: "not installed"
+      available: "{{ bazarr_latest }}"
+      update_available: false
+      note: "check run: this run would install {{ bazarr_latest }}"
+  when: ansible_check_mode and not bazarr_installed.stat.exists
+
+- name: bazarr — end the check run on a host not yet installed
+  ansible.builtin.meta: end_host
+  when: ansible_check_mode and not bazarr_installed.stat.exists
+
+# ----------------------------------------------------------------- discovery --
+# Bazarr generates its API key on first start and writes it to config.yaml. Read it
+# rather than pinning it, so the key never lands in git.
+- name: bazarr — wait for the first start to write config.yaml
+  ansible.builtin.wait_for:
+    path: "{{ bazarr_config_file }}"
+    search_regex: 'apikey:'
+    timeout: 120
+  check_mode: false
+  tags: [bazarr_assign]
+
+- name: bazarr — wait for the port
+  ansible.builtin.wait_for:
+    host: "{{ bazarr_api_host }}"
+    port: "{{ bazarr_port }}"
+    timeout: 180
+  check_mode: false
+  tags: [bazarr_assign]
+
+- name: bazarr — read config.yaml
+  ansible.builtin.slurp:
+    src: "{{ bazarr_config_file }}"
+  register: bazarr_config_raw
+  check_mode: false
+  no_log: true
+  tags: [bazarr_assign]
+
+- name: bazarr — extract the API key
+  ansible.builtin.set_fact:
+    bazarr_api_key: "{{ (bazarr_config_raw.content | b64decode | from_yaml).auth.apikey | default('') }}"
+  no_log: true
+  tags: [bazarr_assign]
+
+- name: bazarr — fail when the API key is empty
+  ansible.builtin.assert:
+    that: bazarr_api_key | length > 10
+    fail_msg: "No usable auth.apikey in {{ bazarr_config_file }} on {{ inventory_hostname }}."
+  tags: [bazarr_assign]
+
+# ------------------------------------------------------------ version state --
+- name: bazarr — read the running version
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/status"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_status
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr — resolve the current version
+  ansible.builtin.set_fact:
+    bazarr_current: "{{ bazarr_status.json.data.bazarr_version | default('') }}"
+
+- name: bazarr — fail when the running version is unreadable
+  ansible.builtin.assert:
+    that: bazarr_current | length > 0
+    fail_msg: >-
+      /api/system/status on {{ inventory_hostname }} answered but named no bazarr_version.
+      The version check examined nothing.
+
+- name: bazarr — record the update report
+  ansible.builtin.set_fact:
+    media_update_report:
+      service: bazarr
+      mechanism: "github-release-zip"
+      current: "{{ bazarr_current }}"
+      available: "{{ bazarr_latest if bazarr_latest != bazarr_current else '' }}"
+      update_available: "{{ bazarr_latest != bazarr_current }}"
+
+- name: bazarr — apply the update
+  ansible.builtin.include_tasks: update.yml
+  when:
+    - media_update_apply | bool
+    - bazarr_latest != bazarr_current
+
+# ------------------------------------------------------------------- config --
+# Tagged `bazarr_config`. A run with `--skip-tags bazarr_config` converges install and
+# version only, which is the run to use while Vault is sealed.
+- name: bazarr — converge the declared config
+  ansible.builtin.include_tasks:
+    file: config.yml
+    apply:
+      tags: [bazarr_config]
+  tags: [bazarr_config]
+
+# Assign the default profile to series and movies that have none (opt-in). Bazarr
+# applies a default profile to NEW items only, so a library that existed first needs
+# this once:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit bazarr --tags bazarr_assign
+- name: bazarr — assign the default profile to unassigned series and movies
+  ansible.builtin.include_tasks:
+    file: assign.yml
+    apply:
+      tags: [bazarr_assign, never]
+  tags: [bazarr_assign, never]

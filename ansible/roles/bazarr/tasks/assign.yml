@@ -1,0 +1,81 @@
+# bazarr — give the default profile to series and movies that have none.
+#
+# Bazarr applies the default profile to items it adds after the setting exists. A library
+# that Sonarr and Radarr held first has items with no profile, and Bazarr never searches
+# for those. This task assigns the declared profile to each such item, once.
+#
+# Opt-in (the `never` tag). Run it after tasks/config.yml has converged:
+#   ansible-playbook playbooks/media-roles.yml --limit bazarr --tags bazarr_assign
+---
+- name: bazarr assign — read the profiles
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/languages/profiles"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_assign_profiles
+  changed_when: false
+  check_mode: false
+
+- name: bazarr assign — resolve the declared profile
+  ansible.builtin.set_fact:
+    bazarr_assign_profile_id: >-
+      {{ (bazarr_assign_profiles.json | selectattr('name', 'equalto', bazarr_profile_name) | list | first).profileId }}
+
+- name: bazarr assign — read the series and movies
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/{{ item }}?start=0&length=-1"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 120
+  loop: [series, movies]
+  register: bazarr_assign_items
+  changed_when: false
+  check_mode: false
+
+- name: bazarr assign — list the items with no profile
+  ansible.builtin.set_fact:
+    bazarr_assign_series: >-
+      {{ (bazarr_assign_items.results | selectattr('item', 'equalto', 'series') | first).json.data
+         | selectattr('profileId', 'none') | map(attribute='sonarrSeriesId') | list }}
+    bazarr_assign_movies: >-
+      {{ (bazarr_assign_items.results | selectattr('item', 'equalto', 'movies') | first).json.data
+         | selectattr('profileId', 'none') | map(attribute='radarrId') | list }}
+
+- name: bazarr assign — say what was examined
+  ansible.builtin.debug:
+    msg: >-
+      Read {{ (bazarr_assign_items.results | selectattr('item', 'equalto', 'series') | first).json.data | length }} series
+      and {{ (bazarr_assign_items.results | selectattr('item', 'equalto', 'movies') | first).json.data | length }} movies.
+      {{ bazarr_assign_series | length }} series and {{ bazarr_assign_movies | length }} movies have no profile.
+  changed_when: (bazarr_assign_series | length) + (bazarr_assign_movies | length) > 0
+
+- name: bazarr assign — assign the profile to each series
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/series"
+    method: POST
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    body_format: form-urlencoded
+    body:
+      seriesid: "{{ item }}"
+      profileid: "{{ bazarr_assign_profile_id }}"
+    status_code: [200, 204]
+    timeout: 30
+  loop: "{{ bazarr_assign_series }}"
+
+- name: bazarr assign — assign the profile to each movie
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/movies"
+    method: POST
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    body_format: form-urlencoded
+    body:
+      radarrid: "{{ item }}"
+      profileid: "{{ bazarr_assign_profile_id }}"
+    status_code: [200, 204]
+    timeout: 30
+  loop: "{{ bazarr_assign_movies }}"

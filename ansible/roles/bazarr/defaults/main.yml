@@ -1,0 +1,90 @@
+# bazarr 222/.222 — subtitles for the series and movies that sonarr and radarr manage
+# (PET-852). github.com/morpheus65535/bazarr, Python, run from a release zip.
+#
+# It has its own role instead of joining `servarr`. Bazarr is not a Servarr app: it
+# has no built-in updater to drive, a different API, and its install is a Python
+# venv, not a binary tarball.
+---
+bazarr_repo: morpheus65535/bazarr
+bazarr_service: bazarr
+
+# The release zip extracts to bazarr_install_dir. The venv sits beside it, not
+# inside it, so swapping the install tree in an update never touches the venv.
+bazarr_install_dir: /opt/bazarr
+bazarr_venv_dir: /opt/bazarr-venv
+
+# config.yaml and the database live under bazarr_data_dir. Bazarr writes its own
+# subdirectories there (config/, db/, log/, cache/), so this is the one path to back up.
+bazarr_data_dir: /var/lib/bazarr
+bazarr_config_file: "{{ bazarr_data_dir }}/config/config.yaml"
+
+bazarr_port: 6767
+# The API key never leaves the container: every call goes over loopback.
+bazarr_api_host: "127.0.0.1"
+
+# The service runs as root, like sonarr and radarr. In an unprivileged LXC, root maps
+# to one host uid, and the library is writable by that uid. A dedicated user would map
+# to a different host uid and could not write the .srt files beside the media.
+
+# ffmpeg gives Bazarr ffprobe, which it uses to read embedded subtitle tracks. The
+# -dev packages and gcc cover a requirements.txt entry that has no wheel for this
+# Python.
+bazarr_packages:
+  - python3
+  - python3-venv
+  - python3-dev
+  - unzip
+  - ffmpeg
+  - gcc
+  - libxml2-dev
+  - libxslt1-dev
+
+# The mount scripts/lxc-mounts-222.sh adds. The role refuses to install onto an empty
+# library, because every later check would still pass.
+bazarr_media_root: /mnt/media
+
+# Disk headroom before an update downloads a zip and backs up the data directory.
+bazarr_min_free_mb: 512
+
+# Wait for the service to answer after a start or an update.
+bazarr_start_wait_retries: 30
+bazarr_start_wait_delay: 10
+
+# ------------------------------------------------------------ declared config --
+# tasks/config.yml converges these through Bazarr's settings API. Settings that
+# Bazarr's UI changes live outside git, so a rebuild would restore the defaults.
+
+bazarr_language: en
+bazarr_profile_name: English
+
+# Bazarr's provider keys, in the order Bazarr tries them.
+bazarr_providers:
+  - opensubtitlescom
+  - podnapisi
+  - yifysubtitles
+
+# Sonarr and Radarr. The address comes from the inventory (`ansible_host`), the port is
+# each app's default, and the API key is read from the app's config.xml on every run.
+bazarr_arr_apps:
+  sonarr:
+    port: 8989
+    config_dir: /var/lib/sonarr
+  radarr:
+    port: 7878
+    config_dir: /var/lib/radarr
+
+# The OpenSubtitles.com login. tasks/vault.yml reads it on the controller, through the
+# `vault` CLI, as the `ansible` AppRole, whose policy reads kv/data/services/*.
+# scripts/seed-bazarr-vault.sh writes it; no session does.
+bazarr_vault_path: kv/services/media/bazarr
+bazarr_vault_addr: "{{ lookup('ansible.builtin.env', 'VAULT_ADDR') | default('https://192.168.50.223:8200', true) }}"
+bazarr_vault_cacert: >-
+  {{ lookup('ansible.builtin.env', 'VAULT_CACERT')
+     | default((role_path ~ '/../../../environments/media/vault-ca.crt') | realpath, true) }}
+# petedio-iac's docs/runbooks/vault-seed.md writes these two files to its gitignored
+# .secrets directory. The default assumes sibling clones, as in ~/petedio.
+bazarr_vault_secrets_dir: >-
+  {{ lookup('ansible.builtin.env', 'SECRETS_DIR')
+     | default((role_path ~ '/../../../../iac/.secrets') | realpath, true) }}
+bazarr_vault_role_id_file: "{{ bazarr_vault_secrets_dir }}/ansible.role_id"
+bazarr_vault_secret_id_file: "{{ bazarr_vault_secrets_dir }}/ansible.secret_id"

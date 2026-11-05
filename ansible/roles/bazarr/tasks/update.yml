@@ -1,0 +1,157 @@
+# bazarr — update to bazarr_latest. Included only when media_update_apply is true and
+# the running version differs from the latest release.
+#
+# Strategy, as in the seerr role: extract the new tree beside the old one and swap by
+# rename. The old tree stays whole until the new version answers, so a failed update is
+# a one-line rollback. The data directory is backed up first because it holds the only
+# state a rollback cannot rebuild: the database, the language profiles and the config.
+#
+# Success is "answers again AND reports the target version". A 200 on the old version
+# means the update silently failed.
+---
+- name: bazarr — gather mount facts for the space check
+  ansible.builtin.setup:
+    gather_subset: [mounts]
+  check_mode: false
+
+- name: bazarr — require {{ bazarr_min_free_mb }}MB free
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | map(attribute='size_available')
+         | first | default(0)) > (bazarr_min_free_mb | int * 1048576)
+    fail_msg: "Not enough free space on / to update bazarr ({{ bazarr_min_free_mb }}MB needed)."
+
+- name: bazarr — update
+  vars:
+    bazarr_new_dir: "/opt/bazarr.new-{{ bazarr_latest }}"
+    bazarr_old_dir: "/opt/bazarr.old-{{ bazarr_current }}"
+  block:
+    - name: bazarr — back up the data directory
+      community.general.archive:
+        path: "{{ bazarr_data_dir }}"
+        dest: "/root/bazarr-data-{{ bazarr_current }}-pre-{{ bazarr_latest }}.tgz"
+        format: gz
+        force_archive: true
+
+    - name: bazarr — new tree directory present
+      ansible.builtin.file:
+        path: "{{ bazarr_new_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: bazarr — fetch and extract {{ bazarr_latest_tag }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/{{ bazarr_repo }}/releases/download/{{ bazarr_latest_tag }}/bazarr.zip"
+        dest: "{{ bazarr_new_dir }}"
+        remote_src: true
+        creates: "{{ bazarr_new_dir }}/bazarr.py"
+
+    - name: bazarr — stop the service for the swap
+      ansible.builtin.systemd_service:
+        name: "{{ bazarr_service }}"
+        state: stopped
+
+    - name: bazarr — move the old tree aside
+      ansible.builtin.command:
+        cmd: "mv {{ bazarr_install_dir }} {{ bazarr_old_dir }}"
+        creates: "{{ bazarr_old_dir }}"
+        removes: "{{ bazarr_install_dir }}"
+
+    - name: bazarr — activate the new tree
+      ansible.builtin.command:
+        cmd: "mv {{ bazarr_new_dir }} {{ bazarr_install_dir }}"
+        creates: "{{ bazarr_install_dir }}"
+
+    - name: bazarr — install the new requirements
+      ansible.builtin.pip:
+        requirements: "{{ bazarr_install_dir }}/requirements.txt"
+        virtualenv: "{{ bazarr_venv_dir }}"
+        virtualenv_command: python3 -m venv
+
+    - name: bazarr — start the service
+      ansible.builtin.systemd_service:
+        name: "{{ bazarr_service }}"
+        state: started
+
+    - name: bazarr — wait for the target version
+      ansible.builtin.uri:
+        url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/status"
+        headers:
+          X-API-KEY: "{{ bazarr_api_key }}"
+        timeout: 15
+      register: bazarr_post_update
+      until:
+        - bazarr_post_update.status is defined
+        - bazarr_post_update.status == 200
+        - bazarr_post_update.json.data.bazarr_version | default('') == bazarr_latest
+      retries: "{{ bazarr_start_wait_retries }}"
+      delay: "{{ bazarr_start_wait_delay }}"
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: bazarr — fail when it did not land on {{ bazarr_latest }}
+      ansible.builtin.fail:
+        msg: >-
+          bazarr did not reach {{ bazarr_latest }} within
+          {{ bazarr_start_wait_retries * bazarr_start_wait_delay }}s (last seen:
+          {{ bazarr_post_update.json.data.bazarr_version | default('unreachable') }}).
+          Rolling back to {{ bazarr_current }}. Check `journalctl -u {{ bazarr_service }}`.
+      when: bazarr_post_update.json.data.bazarr_version | default('') != bazarr_latest
+
+    - name: bazarr — drop the superseded tree
+      ansible.builtin.file:
+        path: "{{ bazarr_old_dir }}"
+        state: absent
+
+    - name: bazarr — record the post-update version
+      ansible.builtin.set_fact:
+        media_update_report: "{{ media_update_report | combine({
+          'current': bazarr_latest,
+          'available': '',
+          'update_available': false,
+          'updated': true }) }}"
+
+  # Each step is a no-op unless the swap already happened, so this is safe whether the
+  # failure came at the download or at the start.
+  rescue:
+    - name: bazarr — roll back — stop the service
+      ansible.builtin.systemd_service:
+        name: "{{ bazarr_service }}"
+        state: stopped
+
+    # One shell step, because the state it finds decides what to do. Three cases:
+    # the swap never happened (no old tree: do nothing), the swap half-happened (old
+    # tree aside, no new tree active: just restore), or it fully happened (move the
+    # failed tree aside, then restore).
+    - name: bazarr — roll back — restore the previous tree
+      ansible.builtin.shell:
+        cmd: |
+          if [ -d {{ bazarr_old_dir | quote }} ]; then
+            if [ -d {{ bazarr_install_dir | quote }} ]; then
+              mv {{ bazarr_install_dir | quote }} /opt/bazarr.failed-{{ bazarr_latest }}
+            fi
+            mv {{ bazarr_old_dir | quote }} {{ bazarr_install_dir | quote }}
+            echo restored
+          fi
+      register: bazarr_rollback
+      changed_when: "'restored' in bazarr_rollback.stdout"
+
+    - name: bazarr — roll back — reinstall the previous requirements
+      ansible.builtin.pip:
+        requirements: "{{ bazarr_install_dir }}/requirements.txt"
+        virtualenv: "{{ bazarr_venv_dir }}"
+        virtualenv_command: python3 -m venv
+
+    - name: bazarr — roll back — start the service
+      ansible.builtin.systemd_service:
+        name: "{{ bazarr_service }}"
+        state: started
+
+    - name: bazarr — fail, and say what is where
+      ansible.builtin.fail:
+        msg: >-
+          The bazarr update to {{ bazarr_latest }} failed and the previous tree was
+          restored. The failed tree is at /opt/bazarr.failed-{{ bazarr_latest }} and the data
+          backup at /root/bazarr-data-{{ bazarr_current }}-pre-{{ bazarr_latest }}.tgz.
