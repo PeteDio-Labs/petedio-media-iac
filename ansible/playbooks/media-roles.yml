@@ -42,6 +42,17 @@
   roles:
     - plex
 
+# Bazarr is not a Servarr app: no built-in updater, a Python venv, its own API. It
+# reads Sonarr's and Radarr's config.xml for their API keys, so it sits after them.
+#
+# Its declared-config tasks need Vault (the OpenSubtitles.com login). Tagged
+# `bazarr_config`; --skip-tags bazarr_config converges install and version only.
+- name: Bazarr
+  hosts: bazarr
+  gather_facts: false
+  roles:
+    - bazarr
+
 - name: Seerr
   hosts: seerr
   gather_facts: false

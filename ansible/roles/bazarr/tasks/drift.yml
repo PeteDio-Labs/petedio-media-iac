@@ -1,0 +1,144 @@
+# bazarr — compare the declared config with what Bazarr holds.
+#
+# In:  bazarr_api_key, bazarr_arr_key (sonarr, radarr), bazarr_os_username and
+#      bazarr_os_password
+# Out: bazarr_drift, a list of setting names whose value differs, plus the facts
+#      tasks/config.yml needs to write them. Values are never listed: they include keys
+#      and a password.
+#
+# config.yml includes this twice, before the write and after it, so the read-back that
+# proves the write is the same comparison that found the drift.
+---
+- name: bazarr drift — read the settings
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/settings"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_settings_cur
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr drift — read the language profiles
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/languages/profiles"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_profiles_cur
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr drift — read the languages
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/languages"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_languages_cur
+  changed_when: false
+  check_mode: false
+
+# ------------------------------------------------------------------ profile --
+# The declared profile is one language, with hearing-impaired and forced subtitles not
+# required. A profile of this name that already exists keeps its id, so the default
+# profile settings never point at a number that changed.
+  no_log: true
+
+- name: bazarr drift — resolve the profile
+  ansible.builtin.set_fact:
+    bazarr_profile_cur: >-
+      {{ bazarr_profiles_cur.json | selectattr('name', 'equalto', bazarr_profile_name) | list | first | default({}) }}
+    bazarr_profile_next_id: >-
+      {{ ((bazarr_profiles_cur.json | map(attribute='profileId') | map('int') | list) + [0]) | max + 1 }}
+
+- name: bazarr drift — build the declared profile
+  ansible.builtin.set_fact:
+    bazarr_profile_id: "{{ bazarr_profile_cur.profileId | default(bazarr_profile_next_id) | int }}"
+    bazarr_profile_ok: >-
+      {{ bazarr_profile_cur != {}
+         and (bazarr_profile_cur['items'] | map(attribute='language') | list) == [bazarr_language]
+         and (bazarr_profile_cur['items'] | map(attribute='hi') | map('string') | unique | list) == ['False']
+         and (bazarr_profile_cur['items'] | map(attribute='forced') | map('string') | unique | list) == ['False'] }}
+
+- name: bazarr drift — build the profile list to write
+  ansible.builtin.set_fact:
+    bazarr_profiles_new: >-
+      {{ (bazarr_profiles_cur.json | rejectattr('name', 'equalto', bazarr_profile_name) | list)
+         + [{
+              'profileId': bazarr_profile_id | int,
+              'name': bazarr_profile_name,
+              'cutoff': none,
+              'items': [{'id': 1, 'language': bazarr_language,
+                         'audio_exclude': 'False', 'hi': 'False', 'forced': 'False'}],
+              'mustContain': [],
+              'mustNotContain': [],
+              'originalFormat': false,
+              'tag': none
+            }] }}
+
+- name: bazarr drift — find the enabled languages
+  ansible.builtin.set_fact:
+    bazarr_languages_enabled: >-
+      {{ bazarr_languages_cur.json | selectattr('enabled', 'equalto', true) | map(attribute='code2') | list }}
+
+# ----------------------------------------------------------------- settings --
+# Keys are `<section>-<setting>`, the names Bazarr's settings form posts.
+- name: bazarr drift — declare the settings
+  ansible.builtin.set_fact:
+    bazarr_desired:
+      general-use_sonarr: true
+      general-use_radarr: true
+      # Ansible owns the version (the unit passes --no-update), so Bazarr's own
+      # updater stays off in settings too.
+      general-auto_update: false
+      general-serie_default_enabled: true
+      general-serie_default_profile: "{{ bazarr_profile_id | int }}"
+      general-movie_default_enabled: true
+      general-movie_default_profile: "{{ bazarr_profile_id | int }}"
+      general-enabled_providers: "{{ bazarr_providers }}"
+      sonarr-ip: "{{ hostvars['sonarr'].ansible_host }}"
+      sonarr-port: "{{ bazarr_arr_apps.sonarr.port }}"
+      sonarr-apikey: "{{ bazarr_arr_key.sonarr }}"
+      radarr-ip: "{{ hostvars['radarr'].ansible_host }}"
+      radarr-port: "{{ bazarr_arr_apps.radarr.port }}"
+      radarr-apikey: "{{ bazarr_arr_key.radarr }}"
+      opensubtitlescom-username: "{{ bazarr_os_username }}"
+      opensubtitlescom-password: "{{ bazarr_os_password }}"
+  no_log: true
+
+# Lists compare as sorted strings and everything else as lower-case text, so `true`,
+# "True" and "true" are one value. A key Bazarr does not return reads as '' and counts
+# as drift: that is a key this role cannot confirm, not one it can skip.
+- name: bazarr drift — start with no drift
+  ansible.builtin.set_fact:
+    bazarr_drift: []
+
+- name: bazarr drift — find the settings that differ
+  ansible.builtin.set_fact:
+    bazarr_drift: "{{ bazarr_drift | default([]) + [item.key] }}"
+  vars:
+    bazarr_sec: "{{ item.key.split('-', 1)[0] }}"
+    bazarr_name: "{{ item.key.split('-', 1)[1] }}"
+    bazarr_cur: "{{ (bazarr_settings_cur.json[bazarr_sec] | default({}))[bazarr_name] | default('') }}"
+  loop: "{{ bazarr_desired | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    ((bazarr_cur | map('string') | sort | list) if (bazarr_cur is not string and bazarr_cur is iterable)
+     else (bazarr_cur | string | lower))
+    != ((item.value | map('string') | sort | list) if (item.value is not string and item.value is iterable)
+        else (item.value | string | lower))
+  no_log: true
+
+- name: bazarr drift — add the profile and the language
+  ansible.builtin.set_fact:
+    bazarr_drift: >-
+      {{ bazarr_drift
+         + ([] if bazarr_profile_ok | bool else ['languages-profiles'])
+         + ([] if bazarr_language in bazarr_languages_enabled else ['languages-enabled']) }}

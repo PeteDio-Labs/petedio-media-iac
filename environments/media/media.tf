@@ -279,6 +279,45 @@ module "radarr" {
   ]
 }
 
+# bazarr 222/.222 on pve03 — `local` 8G, vmbr0 (PET-852). Subtitles for the series
+# and movies that sonarr and radarr manage.
+#
+# WHY 222. A 2xx guest takes the address whose last octet is its VMID, which is the
+# convention every non-legacy guest follows (plex-gpu 236 explains it above). 222 had
+# no guest and no ping on 2026-11-04, and no retired guest used it. Pedro confirmed it
+# on PET-852. 230, 238 and 241-243 are retired numbers; skip them.
+#
+# THIS IS A CREATE, NOT AN IMPORT. The first plan reads 1 to add, 0 to change, 0 to
+# destroy (plus the pool membership in pool.tf, which is a second add). Anything else
+# means the state and the code disagree, so read the plan before the merge applies it.
+#
+# NO mount_points HERE, DELIBERATELY. The library is a bind mount of /mnt/media, and a
+# bind mount is gated behind Proxmox's `user == root@pam` check. The provider holds an
+# API token, so a create that carries the block fails with
+# `Permission check failed (mount point type bind is only allowed for root@pam)`.
+# plex-gpu 236 hit the same wall, and sonarr and radarr avoided it only because they
+# were imported. scripts/lxc-mounts-222.sh adds the bind with `pct set` as root@pam on
+# pve03, with shared=1 so the guest can migrate. modules/proxmox-lxc keeps mount_point
+# in ignore_changes, so a later apply never strips it.
+#
+# The mount sits at /mnt/media, the same path sonarr and radarr use, so Bazarr needs no
+# path mapping. It has no /downloads mount: Bazarr reads the library and writes
+# subtitle files beside the media, and never touches a download.
+module "bazarr" {
+  source = "../../modules/proxmox-lxc"
+
+  vm_id            = 222
+  hostname         = "bazarr"
+  ipv4_address     = "192.168.50.222/24"
+  cores            = 1
+  memory_dedicated = 1024
+  disk_size        = 8
+  datastore_id     = "local" # pve03 has no thin pool; see PET-334
+  ssh_public_key   = var.ssh_public_key
+  target_node      = "pve03"
+  description      = "Bazarr (subtitles). Media stack — managed by petedio-media-iac."
+}
+
 # prowlarr 109/.20 on pve03 — `local` 4G, vmbr0 (the "media-extra" mislabel in the doc)
 module "prowlarr" {
   source = "../../modules/proxmox-lxc"
@@ -334,6 +373,7 @@ output "media_vm_ids" {
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
     prowlarr        = module.prowlarr.vm_id
+    bazarr          = module.bazarr.vm_id
     qbittorrent_vpn = module.qbittorrent_vpn.vm_id
   }
 }

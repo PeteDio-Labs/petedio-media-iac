@@ -167,8 +167,8 @@ new work into PR descriptions no longer applies — file it in Plane instead.
 Ground-truthed against `/cluster/resources` on 2026-09-06 (PET-354).
 
 **pve03** (`192.168.50.10`) — seerr 101/.33 (eth1-only, no mounts) · sonarr 104/.15 ·
-radarr 105/.16 · prowlarr 109/.20, plus flaresolverr 102/.150 (DHCP, unmanaged) and
-the platform tier.
+radarr 105/.16 · prowlarr 109/.20 · bazarr 222/.222 (subtitles, PET-852), plus
+flaresolverr 102/.150 (DHCP, unmanaged) and the platform tier.
 **pve02** (`192.168.50.11`) — qbittorrent-vpn 110/.21 (Gluetun/Proton) ·
 plex-gpu 236/.236 (Quick Sync; also tailnet `100.97.96.88`).
 
@@ -194,12 +194,22 @@ sonarr/radarr/prowlarr — lidarr went in PET-319) · `plex` (apt; updates plex-
 rendered from Vault since PET-453; each image
 addresses its own registry, `docker.io` or `lscr.io`, since PET-448 — the shared
 `docker.pdlab.dev` Zot prefix named a registry that died with pve01, PET-389) ·
+`bazarr` (subtitles on 222; a release zip, a venv and a systemd unit, with the language
+profile, providers and the Sonarr and Radarr connections declared through its settings
+API, PET-852) ·
 `media-lifecycle` (in-use guards + ordered stop/start).
 
 Playbooks: `check-updates.yml` (version report; it still converges config) · `update-media.yml` ·
 `stack-up.yml` / `stack-down.yml` / `stack-power.yml` · `configure-media.yml`.
 `media-roles.yml` is the shared play body both update entry points import, so a
 dry-run and an apply exercise the same code.
+
+**Bazarr's declared config is the `bazarr_config` tag** (PET-852). It reads the
+OpenSubtitles.com login from `kv/services/media/bazarr`, so it needs unsealed Vault and
+the `ansible` AppRole files. To converge install and version while Vault is sealed, pass
+`--skip-tags bazarr_config`. `scripts/seed-bazarr-vault.sh` writes the login, and Pedro
+runs it. `scripts/lxc-mounts-222.sh` adds the `/mnt/media` bind, because Terraform
+cannot (`docs/GOTCHAS.md`, "Bazarr").
 
 **Read `docs/GOTCHAS.md` before touching a role.** Three live traps:
 

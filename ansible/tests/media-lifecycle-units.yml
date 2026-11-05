@@ -45,7 +45,11 @@
     # plexmediaserver and nothing called plex-gpu; the other four match their
     # inventory hostname, which is why the role default is right for them and
     # wrong for 236.
-    known_units: [plexmediaserver, sonarr, radarr, prowlarr, seerr]
+    # bazarr is the exception to "read off the hosts": PET-852 declared it before
+    # the guest existed, so the unit name comes from roles/bazarr/templates/
+    # bazarr.service.j2 (`{{ bazarr_service }}`, default `bazarr`). After the host
+    # steps run, confirm it with `systemctl list-unit-files bazarr.service` on 222.
+    known_units: [plexmediaserver, sonarr, radarr, prowlarr, seerr, bazarr]
   tasks:
     # ⚠ include_vars, NOT lookup('file') | from_yaml. A lookup returns its result
     # marked unsafe, so Ansible refuses to template it again and the default comes

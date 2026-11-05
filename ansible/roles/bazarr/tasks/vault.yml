@@ -1,0 +1,112 @@
+# bazarr — read the OpenSubtitles.com login from Vault (PET-852).
+#
+# In:  bazarr_vault_*, from defaults
+# Out: bazarr_os_username and bazarr_os_password facts, or a failed play
+#
+# This mirrors roles/qbittorrent-vpn/tasks/env.yml, including why it uses the vault CLI
+# and not community.hashi_vault: the CLI needs no Python library on the controller, and
+# the environment block below stops it reading a token from the Mac's token helper.
+# Every task that touches a value sets no_log. A failure message prints the exit code
+# and stderr, never stdout.
+#
+# To converge while Vault is sealed, run with --skip-tags bazarr_config.
+---
+- name: bazarr vault — find the AppRole credential files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ bazarr_vault_role_id_file }}"
+    - "{{ bazarr_vault_secret_id_file }}"
+  register: bazarr_vault_cred_files
+  delegate_to: localhost
+  become: false
+  check_mode: false
+
+- name: bazarr vault — fail when a credential file is missing
+  ansible.builtin.fail:
+    msg: >-
+      Missing {{ bazarr_vault_cred_files.results | rejectattr('stat.exists')
+      | map(attribute='item') | join(' and ') }}. Write the ansible AppRole's
+      credentials with petedio-iac's docs/runbooks/vault-seed.md, or set
+      SECRETS_DIR to the directory that holds ansible.role_id and ansible.secret_id.
+  when: bazarr_vault_cred_files.results | rejectattr('stat.exists') | list | length > 0
+
+- name: bazarr vault — log in as the ansible AppRole
+  ansible.builtin.command:
+    argv: [vault, write, -field=token, auth/approle/login, "-"]
+    stdin: >-
+      {{ {'role_id': lookup('ansible.builtin.file', bazarr_vault_role_id_file),
+          'secret_id': lookup('ansible.builtin.file', bazarr_vault_secret_id_file)} | to_json }}
+  environment:
+    VAULT_ADDR: "{{ bazarr_vault_addr }}"
+    VAULT_CACERT: "{{ bazarr_vault_cacert }}"
+    VAULT_TOKEN: ""
+    VAULT_CONFIG_PATH: /dev/null
+    HOME: /var/empty
+  register: bazarr_vault_login
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr vault — fail when the login failed
+  ansible.builtin.fail:
+    msg: >-
+      The ansible AppRole could not log in to {{ bazarr_vault_addr }}.
+      {{ "The login exited 0 but printed no token." if (bazarr_vault_login.rc | default(1)) == 0
+         else 'rc=' ~ (bazarr_vault_login.rc | default('?')) ~ ': '
+              ~ ((bazarr_vault_login.stderr | default('') | trim) or (bazarr_vault_login.msg | default(''))) | truncate(300) }}
+      If Vault is sealed, unseal it, or converge without this step using
+      --skip-tags bazarr_config.
+  when: >-
+    (bazarr_vault_login.rc | default(1)) != 0
+    or (bazarr_vault_login.stdout | default('') | trim | length) == 0
+
+# The shell reads the token from stdin and exports it to the CLI alone.
+- name: bazarr vault — read the OpenSubtitles.com login
+  ansible.builtin.shell:
+    cmd: >-
+      IFS= read -r VAULT_TOKEN && [ -n "$VAULT_TOKEN" ] && export VAULT_TOKEN &&
+      exec vault kv get -format=json {{ bazarr_vault_path | quote }}
+    stdin: "{{ bazarr_vault_login.stdout | trim }}"
+  environment:
+    VAULT_ADDR: "{{ bazarr_vault_addr }}"
+    VAULT_CACERT: "{{ bazarr_vault_cacert }}"
+    VAULT_TOKEN: ""
+    VAULT_CONFIG_PATH: /dev/null
+    HOME: /var/empty
+  register: bazarr_vault_read
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr vault — fail when the read failed
+  ansible.builtin.fail:
+    msg: >-
+      The ansible AppRole could not read {{ bazarr_vault_path }}.
+      "permission denied" means the ansible policy no longer reads kv/data/services/*.
+      "No value found" means the path is unseeded, so ask Pedro to run
+      scripts/seed-bazarr-vault.sh. The CLI exited {{ bazarr_vault_read.rc | default('?') }}:
+      {{ ((bazarr_vault_read.stderr | default('') | trim) or (bazarr_vault_read.msg | default(''))) | truncate(300) }}
+  when: (bazarr_vault_read.rc | default(1)) != 0
+
+- name: bazarr vault — keep the login
+  ansible.builtin.set_fact:
+    bazarr_os_username: "{{ ((bazarr_vault_read.stdout | from_json).data.data | default({}, true)).username | default('') }}"
+    bazarr_os_password: "{{ ((bazarr_vault_read.stdout | from_json).data.data | default({}, true)).password | default('') }}"
+  no_log: true
+
+# A secret path that exists with empty fields must not read as configured.
+- name: bazarr vault — fail when a field is empty
+  ansible.builtin.assert:
+    that:
+      - bazarr_os_username | length > 0
+      - bazarr_os_password | length > 0
+    fail_msg: >-
+      {{ bazarr_vault_path }} exists but `username` or `password` is empty. Ask Pedro to
+      re-run scripts/seed-bazarr-vault.sh.

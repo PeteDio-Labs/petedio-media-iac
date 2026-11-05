@@ -1,0 +1,205 @@
+# bazarr — converge the declared config through Bazarr's settings API (PET-852).
+#
+# What it declares: the English language profile, the default profile for series and
+# movies, the subtitle providers, and the Sonarr and Radarr connections. What it never
+# stores: the Sonarr and Radarr API keys (read from each app's config.xml on every run),
+# Bazarr's own key (read from config.yaml) and the OpenSubtitles.com login (read from
+# Vault).
+#
+# Run it alone, with a read-only drift report first:
+#   ansible-playbook playbooks/media-roles.yml --limit bazarr --tags bazarr_config --check --diff
+#
+# While Vault is sealed, converge everything else with --skip-tags bazarr_config.
+---
+# ------------------------------------------------------------ the arr keys --
+# Delegated to each app's own host. The key goes into a fact and into Bazarr's
+# settings, never into a log.
+- name: bazarr config — read the Sonarr and Radarr config.xml
+  ansible.builtin.slurp:
+    src: "{{ item.value.config_dir }}/config.xml"
+  delegate_to: "{{ item.key }}"
+  loop: "{{ bazarr_arr_apps | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: bazarr_arr_cfg
+  check_mode: false
+  no_log: true
+
+- name: bazarr config — extract the Sonarr and Radarr API keys
+  ansible.builtin.set_fact:
+    bazarr_arr_key:
+      sonarr: >-
+        {{ ((bazarr_arr_cfg.results | selectattr('item.key', 'equalto', 'sonarr') | first).content
+            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([''], true) | first) }}
+      radarr: >-
+        {{ ((bazarr_arr_cfg.results | selectattr('item.key', 'equalto', 'radarr') | first).content
+            | b64decode | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([''], true) | first) }}
+  no_log: true
+
+- name: bazarr config — fail when a key is unusable
+  ansible.builtin.assert:
+    that:
+      - bazarr_arr_key.sonarr | length > 10
+      - bazarr_arr_key.radarr | length > 10
+    fail_msg: "No usable ApiKey in the Sonarr or Radarr config.xml."
+
+- name: bazarr config — read the OpenSubtitles.com login
+  ansible.builtin.include_tasks: vault.yml
+
+# ------------------------------------------------------------------ compare --
+- name: bazarr config — compare the declared config with Bazarr
+  ansible.builtin.include_tasks: drift.yml
+
+# Names only, never values. changed_when makes a --check run report drift as changed.
+- name: bazarr config — report the drift
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Differs from the declared config: ' ~ (bazarr_drift | join(', '))
+         if bazarr_drift | length > 0 else 'Matches the declared config.' }}
+  changed_when: bazarr_drift | length > 0
+
+# ------------------------------------------------------------------- write --
+# The full declared state goes in whenever any of it differs. Bazarr applies a post as
+# one save, and a partial post would still need the same keys read back.
+- name: bazarr config — start the request body
+  ansible.builtin.set_fact:
+    bazarr_post_body:
+      languages-enabled: "{{ (bazarr_languages_enabled + [bazarr_language]) | unique | list }}"
+      languages-profiles: "{{ bazarr_profiles_new | to_json }}"
+  no_log: true
+  when: bazarr_drift | length > 0
+
+- name: bazarr config — add the settings to the request body
+  ansible.builtin.set_fact:
+    bazarr_post_body: >-
+      {{ bazarr_post_body | combine({
+           'settings-' ~ item.key: ((item.value | string | lower) if item.value is boolean else item.value)
+         }) }}
+  loop: "{{ bazarr_desired | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  when: bazarr_drift | length > 0
+
+- name: bazarr config — write the settings
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/settings"
+    method: POST
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    body_format: form-urlencoded
+    body: "{{ bazarr_post_body }}"
+    status_code: [200, 204]
+    timeout: 60
+  changed_when: true
+  no_log: true
+  when: bazarr_drift | length > 0
+
+# Some settings restart Bazarr's workers, so wait for the API before the read-back.
+- name: bazarr config — wait for the API after the write
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/status"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    timeout: 15
+  register: bazarr_after_write
+  until: bazarr_after_write.status is defined and bazarr_after_write.status == 200
+  retries: "{{ bazarr_start_wait_retries }}"
+  delay: "{{ bazarr_start_wait_delay }}"
+  changed_when: false
+  no_log: true
+  when:
+    - bazarr_drift | length > 0
+    - not ansible_check_mode
+
+# ------------------------------------------------------------------ verify --
+# A POST that returned 200 proves nothing about what Bazarr stored. Read it back and
+# run the same comparison. A name in the list means the write did not take.
+- name: bazarr config — read back and compare
+  ansible.builtin.include_tasks: drift.yml
+  when:
+    - bazarr_drift | length > 0
+    - not ansible_check_mode
+
+- name: bazarr config — fail when the write did not take
+  ansible.builtin.assert:
+    that: bazarr_drift | length == 0
+    fail_msg: >-
+      Bazarr still differs from the declared config after the write: {{ bazarr_drift | join(', ') }}.
+      Compare the names against /api/system/settings. A name that never settles may mean the
+      settings API returns that value in another form.
+  when: not ansible_check_mode
+
+# A connected Bazarr lists the library. Wait for it to, and fail when it does not, because
+# an empty health list right after a write only means Bazarr has not tried Sonarr or Radarr
+# yet, and a wrong API key would pass it. The first sync can take minutes. Set
+# bazarr_allow_empty_library to true only for a library that is empty on purpose.
+- name: bazarr config — wait for Bazarr to list the series and movies
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/{{ item }}?start=0&length=1"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  loop: [series, movies]
+  register: bazarr_counts
+  until: >-
+    bazarr_allow_empty_library | bool
+    or ((bazarr_counts.json.total | default(0) | int) > 0)
+  retries: 18
+  delay: 10
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr config — total the series and movies
+  ansible.builtin.set_fact:
+    bazarr_series_total: >-
+      {{ (bazarr_counts.results | selectattr('item', 'equalto', 'series') | first).json.total | default(0) | int }}
+    bazarr_movies_total: >-
+      {{ (bazarr_counts.results | selectattr('item', 'equalto', 'movies') | first).json.total | default(0) | int }}
+
+- name: bazarr config — fail when Bazarr lists nothing
+  ansible.builtin.assert:
+    that: >-
+      bazarr_allow_empty_library | bool
+      or (bazarr_series_total | int) + (bazarr_movies_total | int) > 0
+    fail_msg: >-
+      Bazarr lists {{ bazarr_series_total }} series and {{ bazarr_movies_total }} movies after
+      {{ 18 * 10 }}s. Either the first sync with Sonarr and Radarr is still running, or a
+      connection failed. Re-run this tag once the sync finishes, and read Bazarr's System >
+      Status page if it stays at 0.
+    success_msg: "Bazarr lists {{ bazarr_series_total }} series and {{ bazarr_movies_total }} movies."
+
+# Bazarr names a failed Sonarr or Radarr connection in /api/system/health. Read it after
+# the library lists, so an empty list now means the connections were tried.
+- name: bazarr config — read Bazarr's health
+  ansible.builtin.uri:
+    url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/system/health"
+    headers:
+      X-API-KEY: "{{ bazarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: bazarr_health
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: bazarr config — fail when the health read failed
+  ansible.builtin.fail:
+    msg: >-
+      /api/system/health on {{ inventory_hostname }} answered {{ bazarr_health.status | default('nothing') }}.
+      The connection check examined nothing.
+  when: bazarr_health.status | default(0) != 200
+
+- name: bazarr config — fail when Sonarr or Radarr is not connected
+  ansible.builtin.assert:
+    that: >-
+      bazarr_health.json.data | default([])
+      | selectattr('object', 'search', '(?i)sonarr|radarr') | list | length == 0
+    fail_msg: >-
+      Bazarr reports a problem with Sonarr or Radarr:
+      {{ bazarr_health.json.data | default([]) | selectattr('object', 'search', '(?i)sonarr|radarr')
+         | map(attribute='issue') | join('; ') }}

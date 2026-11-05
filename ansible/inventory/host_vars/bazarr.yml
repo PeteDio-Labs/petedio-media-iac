@@ -1,0 +1,12 @@
+# bazarr 222/.222 — subtitles (PET-852). Not a Servarr app: it has its own role.
+---
+# Matches sonarr and radarr, the apps whose libraries it reads, so timestamps in the
+# three logs line up. See roles/media-base/defaults/main.yml for why this is per host.
+media_timezone: "America/Chicago"
+
+# Lifecycle (stack-up / stack-down / stack-power)
+media_health_port: 6767
+
+# Declared config lives in roles/bazarr/defaults/main.yml (language, providers) and the
+# OpenSubtitles.com login lives in Vault at kv/services/media/bazarr. Nothing secret
+# belongs in this file.
