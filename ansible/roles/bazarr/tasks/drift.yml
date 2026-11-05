@@ -57,6 +57,9 @@
     bazarr_profile_next_id: >-
       {{ ((bazarr_profiles_cur.json | map(attribute='profileId') | map('int') | list) + [0]) | max + 1 }}
 
+# Bazarr 1.6 reads audio_exclude and audio_only_include on every item and raises
+# KeyError when one is missing, which kills the Sonarr sync at the first episode
+# (PET-852). So an item without both keys is drift, and the role rewrites it.
 - name: bazarr drift — build the declared profile
   ansible.builtin.set_fact:
     bazarr_profile_id: "{{ bazarr_profile_cur.profileId | default(bazarr_profile_next_id) | int }}"
@@ -64,7 +67,9 @@
       {{ bazarr_profile_cur != {}
          and (bazarr_profile_cur['items'] | map(attribute='language') | list) == [bazarr_language]
          and (bazarr_profile_cur['items'] | map(attribute='hi') | map('string') | unique | list) == ['False']
-         and (bazarr_profile_cur['items'] | map(attribute='forced') | map('string') | unique | list) == ['False'] }}
+         and (bazarr_profile_cur['items'] | map(attribute='forced') | map('string') | unique | list) == ['False']
+         and (bazarr_profile_cur['items'] | map(attribute='audio_exclude', default='') | map('string') | unique | list) == ['False']
+         and (bazarr_profile_cur['items'] | map(attribute='audio_only_include', default='') | map('string') | unique | list) == ['False'] }}
 
 - name: bazarr drift — build the profile list to write
   ansible.builtin.set_fact:
@@ -75,7 +80,8 @@
               'name': bazarr_profile_name,
               'cutoff': none,
               'items': [{'id': 1, 'language': bazarr_language,
-                         'audio_exclude': 'False', 'hi': 'False', 'forced': 'False'}],
+                         'audio_exclude': 'False', 'audio_only_include': 'False',
+                         'hi': 'False', 'forced': 'False'}],
               'mustContain': [],
               'mustNotContain': [],
               'originalFormat': false,
