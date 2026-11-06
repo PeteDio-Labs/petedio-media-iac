@@ -5,8 +5,9 @@
 #   1. install   a release zip in /opt/bazarr, a venv in /opt/bazarr-venv, a systemd unit.
 #   2. version   read the running version, compare it with the latest GitHub release,
 #                record the update report, and (media_update_apply) update.
-#   3. config    tasks/config.yml declares the language profile, providers and the
-#                Sonarr and Radarr connections.
+#   3. config    tasks/config.yml declares the language profile, providers, the
+#                Sonarr and Radarr connections and the Plex refresh (PET-863). The
+#                Plex refresh needs a one-time OAuth sign-in in Bazarr's UI.
 #
 # Read-only tasks carry `check_mode: false`, so `--check` still produces a real
 # version report instead of skipping the queries and reporting nothing.

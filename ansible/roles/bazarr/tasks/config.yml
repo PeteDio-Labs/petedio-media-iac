@@ -208,26 +208,34 @@
 # Bazarr finds an item to refresh by library name, through its own Plex sign-in. Ask
 # Bazarr for the libraries it sees: an empty list means no sign-in or no reachable
 # server, and a missing name would fail quietly at the first subtitle (PET-863).
+# no_log hides the API key, so any status is accepted here and the assert below explains
+# the failure: a stale sign-in answers 500 rather than an empty list.
 - name: bazarr config — read the Plex libraries through Bazarr
   ansible.builtin.uri:
     url: "http://{{ bazarr_api_host }}:{{ bazarr_port }}/api/plex/oauth/libraries"
     headers:
       X-API-KEY: "{{ bazarr_api_key }}"
     return_content: true
+    status_code: [-1, 200, 401, 403, 404, 500, 502, 503]
     timeout: 60
   register: bazarr_plex_libraries
   changed_when: false
   check_mode: false
   no_log: true
 
+# Names are checked with their type, so a movie library listed as a series library fails.
 - name: bazarr config — fail when Bazarr cannot see the declared Plex libraries
   ansible.builtin.assert:
     that: bazarr_plex_missing | length == 0
     fail_msg: >-
-      Bazarr sees no Plex library named {{ bazarr_plex_missing | join(', ') }}.
-      {{ 'Bazarr has no Plex sign-in or cannot reach the server. Sign in once in Bazarr, under Settings > Plex.'
+      Bazarr sees no Plex library for: {{ bazarr_plex_missing | join(', ') }}.
+      {{ ('Bazarr answered HTTP ' ~ (bazarr_plex_libraries.status | default('none')) ~ ', or has no Plex sign-in. '
+          ~ 'Sign in once in Bazarr, under Settings > Plex.')
          if bazarr_plex_seen | length == 0 else 'Plex has: ' ~ (bazarr_plex_seen | join(', ')) ~ '.' }}
   vars:
-    bazarr_plex_seen: "{{ bazarr_plex_libraries.json.data | default([]) | map(attribute='title') | list }}"
+    bazarr_plex_data: "{{ bazarr_plex_libraries.json.data | default([]) if bazarr_plex_libraries.status | default(0) == 200 else [] }}"
+    bazarr_plex_seen: "{{ bazarr_plex_data | map(attribute='type') | zip(bazarr_plex_data | map(attribute='title')) | map('join', ':') | list }}"
     bazarr_plex_missing: >-
-      {{ (bazarr_plex_movie_libraries + bazarr_plex_series_libraries) | difference(bazarr_plex_seen) }}
+      {{ ((bazarr_plex_movie_libraries | map('regex_replace', '^', 'movie:') | list)
+          + (bazarr_plex_series_libraries | map('regex_replace', '^', 'show:') | list))
+         | difference(bazarr_plex_seen) }}
