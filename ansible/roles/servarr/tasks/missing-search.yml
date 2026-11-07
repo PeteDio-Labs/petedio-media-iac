@@ -1,0 +1,48 @@
+# servarr — install the daily missing-episode search (PET-867). Included by
+# tasks/main.yml only when `servarr_missing_search` is true and the run passes
+# `--tags missing_search`.
+#
+# The timer runs `sonarr-missing-search`, which asks Sonarr for MissingEpisodeSearch
+# (monitored, aired episodes with no file), waits for the command to finish, and
+# prints what was searched and which episodes are still missing. A failed call,
+# a command that does not finish and a command that fails each exit non-zero, so
+# `systemctl status sonarr-missing-search` and the journal show a failure instead
+# of a quiet green.
+---
+- name: "{{ servarr_app }} — install jq, which the script uses to read Sonarr's answers"
+  ansible.builtin.apt:
+    name: jq
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "{{ servarr_app }} — install the search script"
+  ansible.builtin.template:
+    src: missing-search.sh.j2
+    dest: /usr/local/sbin/sonarr-missing-search
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "{{ servarr_app }} — install the service unit"
+  ansible.builtin.template:
+    src: missing-search.service.j2
+    dest: /etc/systemd/system/sonarr-missing-search.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "{{ servarr_app }} — install the timer"
+  ansible.builtin.template:
+    src: missing-search.timer.j2
+    dest: /etc/systemd/system/sonarr-missing-search.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "{{ servarr_app }} — enable the timer"
+  ansible.builtin.systemd_service:
+    name: sonarr-missing-search.timer
+    enabled: true
+    state: started
+    daemon_reload: true
