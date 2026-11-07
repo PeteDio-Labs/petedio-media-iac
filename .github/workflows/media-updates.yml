@@ -12,6 +12,9 @@
 #
 # ⚠ media-base is skipped (--skip-tags baseline). An update run never converges host
 # baseline; see the note on the media-base play in ansible/playbooks/media-roles.yml.
+# bazarr_config is skipped too: it needs the OpenSubtitles.com login from Vault, and this
+# run's Vault role reads kv/iac/lxc-ssh only. The `bazarr` target updates the version
+# and nothing else (PET-855). The `arr` and `plex-and-arr` targets do not include Bazarr.
 #
 # ⚠ THE REPORT MARKERS ARE A CONTRACT. pete-bot reads the report back from this job's
 # log, between the two marker lines printed at the end of the run step. Change them in
@@ -33,7 +36,7 @@ on:
       target:
         description: Which services
         type: choice
-        options: [plex, sonarr, radarr, prowlarr, arr, plex-and-arr]
+        options: [plex, sonarr, radarr, prowlarr, bazarr, arr, plex-and-arr]
         default: plex-and-arr
       force:
         description: Plex only. Update even while someone is watching, or when that cannot be told
@@ -71,7 +74,7 @@ jobs:
         run: |
           case "$TARGET" in
             plex)                   limit=plex-gpu ;;
-            sonarr|radarr|prowlarr) limit="$TARGET" ;;
+            sonarr|radarr|prowlarr|bazarr) limit="$TARGET" ;;
             arr)                    limit=servarr ;;
             plex-and-arr)           limit=plex-gpu:servarr ;;
             *) echo "::error title=media-updates::unknown target '$TARGET'"; exit 1 ;;
@@ -163,7 +166,7 @@ jobs:
              n=\$(ansible -i inventory/hosts.yml '$LIMIT' --list-hosts | sed -n 's/.*hosts (\([0-9]*\)).*/\1/p') && \
              if [ \"\${n:-0}\" -eq 0 ]; then echo 'ABORT: --limit $LIMIT matches no host'; exit 1; fi && \
              ansible-playbook -i inventory/hosts.yml $PLAYBOOK $CHECK --limit '$LIMIT' \
-               --skip-tags baseline -e @/ci/evars.json"
+               --skip-tags baseline,bazarr_config -e @/ci/evars.json"
           rc=$?
           set -e
           m="===== MEDIA UPDATE REPORT"
