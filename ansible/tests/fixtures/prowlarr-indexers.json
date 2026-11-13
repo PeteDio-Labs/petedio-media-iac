@@ -658,5 +658,164 @@
     "tags": [],
     "presets": [],
     "id": 5
+  },
+  {
+    "indexerUrls": [
+      "https://showrss.info/"
+    ],
+    "legacyUrls": [],
+    "definitionName": "showrss",
+    "description": "",
+    "language": "en-US",
+    "enable": true,
+    "redirect": false,
+    "supportsRss": true,
+    "supportsSearch": true,
+    "supportsRedirect": false,
+    "supportsPagination": false,
+    "appProfileId": 1,
+    "protocol": "torrent",
+    "privacy": "public",
+    "capabilities": {
+      "limitsMax": 100,
+      "limitsDefault": 100,
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": [
+            {
+              "id": 5040,
+              "name": "TV/HD",
+              "subCategories": []
+            }
+          ]
+        }
+      ],
+      "supportsRawSearch": false,
+      "searchParams": [
+        "q"
+      ],
+      "tvSearchParams": [
+        "q",
+        "season",
+        "ep"
+      ],
+      "movieSearchParams": [
+        "q"
+      ],
+      "musicSearchParams": [],
+      "bookSearchParams": []
+    },
+    "priority": 10,
+    "downloadClientId": 0,
+    "added": "2026-11-13T17:00:00Z",
+    "sortName": "showrss",
+    "name": "showRSS",
+    "fields": [
+      {
+        "order": 0,
+        "name": "definitionFile",
+        "label": "",
+        "type": "textbox",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "showrss",
+        "hidden": "hidden"
+      },
+      {
+        "order": 1,
+        "name": "baseUrl",
+        "label": "Base Url",
+        "type": "select",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": "https://showrss.info/"
+      },
+      {
+        "order": 2,
+        "name": "baseSettings.queryLimit",
+        "label": "Query Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 3,
+        "name": "baseSettings.grabLimit",
+        "label": "Grab Limit",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 4,
+        "name": "baseSettings.limitsUnit",
+        "label": "Limits Unit",
+        "type": "select",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 0
+      },
+      {
+        "order": 5,
+        "name": "torrentBaseSettings.appMinimumSeeders",
+        "label": "Apps Minimum Seeders",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": 1
+      },
+      {
+        "order": 6,
+        "name": "torrentBaseSettings.seedRatio",
+        "label": "Seed Ratio",
+        "type": "number",
+        "advanced": false,
+        "privacy": "normal",
+        "isFloat": true
+      },
+      {
+        "order": 7,
+        "name": "torrentBaseSettings.seedTime",
+        "label": "Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 8,
+        "name": "torrentBaseSettings.packSeedTime",
+        "label": "Pack Seed Time",
+        "type": "number",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false
+      },
+      {
+        "order": 9,
+        "name": "torrentBaseSettings.preferMagnetUrl",
+        "label": "Prefer Magnet URL",
+        "type": "checkbox",
+        "advanced": true,
+        "privacy": "normal",
+        "isFloat": false,
+        "value": false
+      }
+    ],
+    "implementationName": "Cardigann",
+    "implementation": "Cardigann",
+    "configContract": "CardigannSettings",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#showrss",
+    "tags": [],
+    "presets": [],
+    "id": 11
   }
 ]

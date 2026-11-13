@@ -32,6 +32,7 @@
       The Pirate Bay: {enable: true, min_seeders: 10}
       Nyaa.si: {enable: true, min_seeders: 5}
       leech24: {enable: false}
+      showRSS: {enable: true, min_seeders: 1}
     drift_cases:
       - name: live matches the declaration
         want_puts: {}
@@ -79,6 +80,18 @@
         want_puts:
           leech24: {enable: false, seeders: 3}
 
+      - name: showRSS disabled live
+        edit:
+          showRSS: {enable: false}
+        want_puts:
+          showRSS: {enable: true, seeders: 1}
+
+      - name: showRSS floor raised live
+        edit:
+          showRSS: {seeders: 10}
+        want_puts:
+          showRSS: {enable: true, seeders: 1}
+
       - name: a declared indexer is missing from Prowlarr
         drop: [Nyaa.si]
         edit:
@@ -92,7 +105,7 @@
         want_failed: true
         want_msg_has: Prowlarr has more than one named ["The Pirate Bay"]
   tasks:
-    - name: The fixture holds the four declared indexers
+    - name: The fixture holds the five declared indexers
       ansible.builtin.assert:
         that:
           - indexer_fixture | map(attribute='name') | sort == declared.keys() | sort
