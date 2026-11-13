@@ -40,3 +40,23 @@ servarr_indexers: {}
 # nested under the settings' TorrentBaseSettings property (Prowlarr's
 # SchemaBuilder camel-cases both and joins them with a dot).
 servarr_indexer_seeders_field: "torrentBaseSettings.appMinimumSeeders"
+
+# Declared Sonarr naming config, keyed by the field names GET /api/v3/config/naming
+# returns (PET-600, PET-648). Empty means "manage no naming key". The role writes
+# only when a declared key differs, and sends the live object with those keys changed.
+#
+# Opt-in like servarr_indexers: tasks/main.yml tags the include `never`, so only a
+# run that passes `--tags naming` reaches it. sonarr sets it in
+# inventory/host_vars/sonarr.yml.
+servarr_naming: {}
+
+# Daily re-search of monitored, aired episodes that have no file (PET-867).
+# Opt-in: the tasks carry the `never` tag, so only `--tags missing_search`
+# installs the timer. sonarr sets the toggle in inventory/host_vars/sonarr.yml.
+servarr_missing_search: false
+# systemd OnCalendar time, in the host's timezone.
+servarr_missing_search_time: "04:30"
+# How long the script waits for Sonarr to finish the search command.
+servarr_missing_search_wait_seconds: 600
+# How many of the oldest still-missing episodes the report lists.
+servarr_missing_search_report_rows: 15

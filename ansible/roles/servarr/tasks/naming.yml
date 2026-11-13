@@ -1,0 +1,52 @@
+# servarr — converge Sonarr's naming config to `servarr_naming` (PET-600, PET-648).
+# tasks/main.yml includes this file only when `servarr_naming` is non-empty and the
+# run passes `--tags naming`. The data shape is Sonarr's v3 GET/PUT /config/naming.
+#
+# NOTHING APPLIES THIS ON MERGE. Apply it by hand from ansible/:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit sonarr --tags naming --check --diff
+#   ansible-playbook playbooks/media-roles.yml --limit sonarr --tags naming
+#
+# ⚠ This changes how Sonarr names FUTURE imports and renames. It does not move an
+# existing series folder. To rename a folder that exists, edit the series in Sonarr
+# with "move files" on, or use Mass Editor. Plex rescans the move.
+---
+- name: "{{ servarr_app }} — read the naming config"
+  ansible.builtin.uri:
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/config/naming"
+    headers:
+      X-Api-Key: "{{ servarr_api_key }}"
+    return_content: true
+    timeout: 30
+  register: servarr_naming_get
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "{{ servarr_app }} — keep the live naming config"
+  ansible.builtin.set_fact:
+    servarr_naming_live: "{{ servarr_naming_get.json }}"
+  no_log: true
+
+- name: "{{ servarr_app }} — work out which naming keys drift"
+  ansible.builtin.include_tasks: naming-drift.yml
+
+- name: "{{ servarr_app }} — report naming drift"
+  ansible.builtin.debug:
+    msg: >-
+      {{ servarr_naming_drift if servarr_naming_drift | length > 0
+         else 'No drift in the ' ~ servarr_naming | length ~ ' declared naming keys.' }}
+
+- name: "{{ servarr_app }} — write the naming config"
+  ansible.builtin.uri:
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/config/naming"
+    method: PUT
+    headers:
+      X-Api-Key: "{{ servarr_api_key }}"
+    body_format: json
+    body: "{{ servarr_naming_put }}"
+    status_code: [200, 202]
+    timeout: 30
+  when: servarr_naming_put | length > 0
+  changed_when: true
+  no_log: true

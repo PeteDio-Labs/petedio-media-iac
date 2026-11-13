@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Daily re-search of monitored, aired episodes that have no file (PET-867).
+# Prints what it asked for, what Sonarr answered, and what is still missing.
+# Exits non-zero when any call fails, the command does not finish, or it fails.
+set -euo pipefail
+
+CONFIG="{{ servarr_data_dir }}/config.xml"
+API_KEY=$(sed -n 's:.*<ApiKey>\([^<]*\)</ApiKey>.*:\1:p' "$CONFIG")
+PORT=$(sed -n 's:.*<Port>\([^<]*\)</Port>.*:\1:p' "$CONFIG")
+if [ -z "$API_KEY" ] || [ -z "$PORT" ]; then
+  echo "missing-search: FAILED: no ApiKey or Port in $CONFIG" >&2
+  exit 1
+fi
+BASE="http://{{ servarr_api_host }}:${PORT}/api/{{ servarr_api_version }}"
+WAIT={{ servarr_missing_search_wait_seconds }}
+ROWS={{ servarr_missing_search_report_rows }}
+
+api() { curl -fsS --max-time 30 -H "X-Api-Key: ${API_KEY}" "$@"; }
+
+before=$(api "${BASE}/wanted/missing?pageSize=1&monitored=true" | jq -r '.totalRecords')
+echo "missing-search: ${before} monitored aired episodes have no file; asking Sonarr to search for them"
+
+cmd=$(api -X POST -H 'Content-Type: application/json' -d '{"name":"MissingEpisodeSearch"}' "${BASE}/command")
+id=$(printf '%s' "$cmd" | jq -r '.id')
+status=queued
+elapsed=0
+while [ "$elapsed" -lt "$WAIT" ]; do
+  status=$(api "${BASE}/command/${id}" | jq -r '.status')
+  case "$status" in
+    completed) break ;;
+    failed|aborted|cancelled|orphaned)
+      echo "missing-search: FAILED: command ${id} ended as ${status}" >&2
+      exit 1 ;;
+  esac
+  sleep 10
+  elapsed=$((elapsed + 10))
+done
+if [ "$status" != "completed" ]; then
+  echo "missing-search: FAILED: command ${id} was still ${status} after ${WAIT}s" >&2
+  exit 1
+fi
+
+after=$(api "${BASE}/wanted/missing?pageSize=${ROWS}&monitored=true&sortKey=airDateUtc&sortDirection=ascending&includeSeries=true")
+total=$(printf '%s' "$after" | jq -r '.totalRecords')
+echo "missing-search: command ${id} completed after ${elapsed}s; ${total} monitored aired episodes still have no file (${before} before)"
+printf '%s' "$after" | jq -r '.records[] | "  held back: \(.series.title) S\(.seasonNumber|tostring|if length<2 then "0"+. else . end)E\(.episodeNumber|tostring|if length<2 then "0"+. else . end) aired \(.airDateUtc[0:10])"'
+echo "missing-search: listed the ${ROWS} oldest of ${total}"

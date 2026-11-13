@@ -34,7 +34,7 @@
   register: servarr_config_raw
   check_mode: false
   no_log: true
-  tags: [indexers]
+  tags: [indexers, naming]
 
 - name: "{{ servarr_app }} — extract API key and port"
   ansible.builtin.set_fact:
@@ -45,7 +45,7 @@
       {{ (servarr_config_raw.content | b64decode
           | regex_search('<Port>([^<]+)</Port>', '\1') | first) }}
   no_log: true
-  tags: [indexers]
+  tags: [indexers, naming]
 
 # ---------------------------------------------------------------- indexers --
 # Declared Prowlarr indexer settings (PET-296). Empty for sonarr and radarr, so
@@ -65,6 +65,33 @@
       tags: [indexers, never]
   when: (servarr_indexers | default({}) | length) > 0
   tags: [indexers, never]
+
+# ------------------------------------------------------------------ naming --
+# Declared Sonarr naming config (PET-600, PET-648). Empty for the other apps, so
+# the include never runs there. Opt-in through `never`, for the reason above:
+#
+#   ansible-playbook playbooks/media-roles.yml --limit sonarr --tags naming --check --diff
+- name: "{{ servarr_app }} — converge the declared naming config"
+  ansible.builtin.include_tasks:
+    file: naming.yml
+    apply:
+      tags: [naming, never]
+  when: (servarr_naming | default({}) | length) > 0
+  tags: [naming, never]
+
+# ---------------------------------------------------------- missing search --
+# A daily timer that re-searches monitored, aired episodes with no file (PET-867).
+# Opt-in through `never`. The script reads the API key from config.xml at run
+# time, so no key lands in the unit or the script.
+#
+#   ansible-playbook playbooks/media-roles.yml --limit sonarr --tags missing_search
+- name: "{{ servarr_app }} — install the daily missing-episode search"
+  ansible.builtin.include_tasks:
+    file: missing-search.yml
+    apply:
+      tags: [missing_search, never]
+  when: servarr_missing_search | default(false) | bool
+  tags: [missing_search, never]
 
 # ------------------------------------------------------------ version state --
 # /api/<v>/update returns the release feed newest-first, each entry flagged

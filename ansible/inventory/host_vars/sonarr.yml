@@ -8,3 +8,18 @@ media_timezone: "America/Chicago"
 
 # Lifecycle (stack-up / stack-down / stack-power)
 media_health_port: 8989
+
+# Naming (PET-600, PET-648). Apply with
+# `ansible-playbook playbooks/media-roles.yml --limit sonarr --tags naming`; add `--check --diff` first.
+# renameEpisodes was off, so a release such as New Blood kept its release numbering
+# and Plex misfiled it. The folder format puts the TVDB ID in the folder name, which
+# Plex reads as a hard match instead of guessing from a bare title. It applies to
+# series added or renamed after the apply; it does not move a folder that exists.
+servarr_naming:
+  renameEpisodes: true
+  seriesFolderFormat: "{Series TitleYear} {tvdb-{TvdbId}}"
+
+# Daily search for aired episodes that have no file (PET-867).
+# Apply with `ansible-playbook playbooks/media-roles.yml --limit sonarr --tags missing_search`.
+servarr_missing_search: true
+servarr_missing_search_time: "04:30"

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Daily re-search of aired Sonarr episodes that have no file (PET-867)
+
+[Timer]
+OnCalendar=*-*-* {{ servarr_missing_search_time }}:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

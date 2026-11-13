@@ -1,0 +1,63 @@
+# Regression test for roles/servarr/tasks/naming-drift.yml, the comparison that
+# decides whether tasks/naming.yml PUTs Sonarr's naming config (PET-600, PET-648).
+#
+#   cd ansible
+#   ansible-playbook tests/sonarr-naming-drift.yml
+#
+# Runs on localhost and touches nothing. It feeds the drift file a recorded
+# GET /api/v3/config/naming answer and asserts which keys drift and what the PUT
+# carries. Expect one 'fatal' line and rescued=1 in the recap: the unknown-key
+# case, caught so the test can assert on its message.
+- name: Sonarr naming drift — recorded answers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    naming_fixture: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/sonarr-naming.json') | from_json }}"
+  tasks:
+    - name: Declared values differ — both keys drift and the PUT keeps every other key
+      vars:
+        servarr_naming_live: "{{ naming_fixture }}"
+        servarr_naming:
+          renameEpisodes: true
+          seriesFolderFormat: "{Series TitleYear} {tvdb-{TvdbId}}"
+      block:
+        - ansible.builtin.include_tasks: ../roles/servarr/tasks/naming-drift.yml
+        - ansible.builtin.assert:
+            that:
+              - servarr_naming_drift | length == 2
+              - servarr_naming_put.renameEpisodes is true
+              - servarr_naming_put.seriesFolderFormat == "{Series TitleYear} {tvdb-{TvdbId}}"
+              - servarr_naming_put.standardEpisodeFormat == naming_fixture.standardEpisodeFormat
+              - servarr_naming_put.id == 1
+              - servarr_naming_put.keys() | length == naming_fixture.keys() | length
+            fail_msg: "drift={{ servarr_naming_drift }} put={{ servarr_naming_put }}"
+
+    - name: Live matches the declaration — no drift and no PUT
+      vars:
+        servarr_naming_live: "{{ naming_fixture }}"
+        servarr_naming:
+          renameEpisodes: false
+          seriesFolderFormat: "{Series Title}"
+      block:
+        - ansible.builtin.include_tasks: ../roles/servarr/tasks/naming-drift.yml
+        - ansible.builtin.assert:
+            that:
+              - servarr_naming_drift | length == 0
+              - servarr_naming_put | length == 0
+            fail_msg: "drift={{ servarr_naming_drift }} put={{ servarr_naming_put }}"
+
+    - name: A key Sonarr does not return fails instead of being skipped
+      vars:
+        servarr_naming_live: "{{ naming_fixture }}"
+        servarr_naming:
+          renameEpisode: true
+      block:
+        - ansible.builtin.include_tasks: ../roles/servarr/tasks/naming-drift.yml
+        - ansible.builtin.fail:
+            msg: the misspelled key was accepted
+      rescue:
+        - ansible.builtin.assert:
+            that: "'returns no such key' in (ansible_failed_result | to_json)"
+            fail_msg: "the failure did not name the unknown key: {{ ansible_failed_result | to_json }}"

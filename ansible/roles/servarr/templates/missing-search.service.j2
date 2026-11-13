@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Re-search aired Sonarr episodes that have no file (PET-867)
+After=sonarr.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sonarr-missing-search
+TimeoutStartSec={{ servarr_missing_search_wait_seconds + 120 }}
