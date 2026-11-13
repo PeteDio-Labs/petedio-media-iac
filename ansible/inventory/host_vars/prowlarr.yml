@@ -52,13 +52,23 @@ servarr_indexers:
   LimeTorrents:
     enable: false
     min_seeders: 10
-  # The only enabled source since 2026-10-02, and the one US network TV relies on.
-  # A floor of 10 seeders rejects low-seeded fakes, but not the 2026-09-29 fakes
-  # below, which advertised thousands. ⚠ Every show is now single-homed here, so
-  # when TPB fails, nothing arrives (the 2026-08-17 Big Brother outage).
+  # The only enabled source from 2026-10-02 to 2026-11-13, and the one US network TV
+  # relies on. A floor of 10 seeders rejects low-seeded fakes, but not the
+  # 2026-09-29 fakes below, which advertised thousands. On 2026-11-13 TPB served fake
+  # Grey's Anatomy S23 releases and pulled them after reports. showRSS below is the
+  # second source, so TPB is no longer the only one. Re-add a third source before you
+  # treat any show as multi-homed.
   The Pirate Bay:
     enable: true
     min_seeders: 10
+  # Added through the API on 2026-11-13 as the second enabled source (PET-911): indexer
+  # 11, definition `showrss`, priority 10, `appProfileId` 1. showRSS is a curated scene
+  # feed and needs no Cloudflare bypass. FlareSolverr at 192.168.50.150:8191 returns HTTP
+  # 500, so EZTV and 1337x cannot be added. This role neither creates an indexer nor
+  # sets its priority; it only compares `enable` and the seeder floor.
+  showRSS:
+    enable: true
+    min_seeders: 1
   # Disabled on 2026-10-02 (PET-296): it served all three fake `.exe` releases
   # grabbed on 2026-09-29, each a single 869 MB executable named as a US TV episode.
   # It fed 7 of Sonarr's 369 grabs in the 30 days before, and the library holds no
