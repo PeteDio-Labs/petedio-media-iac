@@ -20,8 +20,18 @@
 # log, between the two marker lines printed at the end of the run step. Change them in
 # pete-bot's src/clients/githubActions.ts at the same time, or /update loses its report.
 #
+# INDEXERS-CHECK (PET-911). `mode=indexers-check target=prowlarr` runs the read-only drift
+# check for the indexers declared in host_vars/prowlarr.yml: `media-roles.yml --check
+# --tags indexers --limit prowlarr`. It reads Prowlarr's indexer list over its API and writes
+# nothing; under --check the PUT task does not run. It needs no new credential, because it
+# mints the same media-updates role and the same SSH key as every other mode. There is no
+# --diff, because the role's own report prints indexer names and drift lines only (an indexer
+# object can hold a private tracker's login). The job exits non-zero unless that report and
+# the play recap are both in the log. It never accepts another target and has no apply form.
+#
 # To run it by hand: Actions > media-updates > Run workflow, or
 #   gh workflow run media-updates.yml -f mode=check -f target=plex-and-arr
+#   gh workflow run media-updates.yml -f mode=indexers-check -f target=prowlarr
 name: media-updates
 run-name: media-updates ${{ inputs.mode }} ${{ inputs.target }} [${{ inputs.request_id }}]
 
@@ -29,9 +39,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: check reports what is available and changes nothing; apply updates
+        description: check reports what is available and changes nothing; apply updates; indexers-check reports Prowlarr indexer drift and changes nothing (target prowlarr only)
         type: choice
-        options: [check, apply]
+        options: [check, apply, indexers-check]
         default: check
       target:
         description: Which services
@@ -70,8 +80,12 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ inputs.target }}
+          MODE: ${{ inputs.mode }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
+          if [ "$MODE" = indexers-check ] && [ "$TARGET" != prowlarr ]; then
+            echo "::error title=media-updates::indexers-check runs on target prowlarr only, not '$TARGET'"; exit 1
+          fi
           case "$TARGET" in
             plex)                   limit=plex-gpu ;;
             sonarr|radarr|prowlarr|bazarr) limit="$TARGET" ;;
@@ -147,8 +161,12 @@ jobs:
               ev["plex_update_force"] = True
           json.dump(ev, open(sys.argv[1], "w"))
           PY
+          TAGS=""
           if [ "$MODE" = apply ]; then
             PLAYBOOK=playbooks/update-media.yml; CHECK=""
+          elif [ "$MODE" = indexers-check ]; then
+            # --tags indexers is how the role's `never`-tagged include is reached.
+            PLAYBOOK=playbooks/media-roles.yml; CHECK="--check"; TAGS="--tags indexers"
           else
             PLAYBOOK=playbooks/check-updates.yml; CHECK="--check"
           fi
@@ -165,10 +183,27 @@ jobs:
              ansible-galaxy collection install -r requirements.yml >/dev/null && \
              n=\$(ansible -i inventory/hosts.yml '$LIMIT' --list-hosts | sed -n 's/.*hosts (\([0-9]*\)).*/\1/p') && \
              if [ \"\${n:-0}\" -eq 0 ]; then echo 'ABORT: --limit $LIMIT matches no host'; exit 1; fi && \
-             ansible-playbook -i inventory/hosts.yml $PLAYBOOK $CHECK --limit '$LIMIT' \
-               --skip-tags baseline,bazarr_config -e @/ci/evars.json"
-          rc=$?
+             ansible-playbook -i inventory/hosts.yml $PLAYBOOK $CHECK $TAGS --limit '$LIMIT' \
+               --skip-tags baseline,bazarr_config -e @/ci/evars.json" 2>&1 | tee "$CI/out/ansible.log"
+          rc=${PIPESTATUS[0]}
           set -e
+          if [ "$MODE" = indexers-check ]; then
+            # Say what was examined. The role's report task prints either the drift lines or
+            # "No drift in the N declared indexers." A run without that block, or without a
+            # clean recap, examined nothing provable and fails.
+            block="$(awk '/TASK \[.*report indexer drift\]/{f=1; next} f && /^TASK |^PLAY /{f=0} f' "$CI/out/ansible.log" | sed '/^$/d')"
+            recap="$(grep -E '^[a-z0-9-]+ +: ok=' "$CI/out/ansible.log" || true)"
+            echo "===== INDEXER DRIFT REPORT BEGIN ====="
+            if [ -n "$block" ]; then printf '%s\n' "$block"; else echo "No drift report: the run stopped before the report task (ansible exit $rc)."; fi
+            echo "$recap"
+            echo "===== INDEXER DRIFT REPORT END ====="
+            { echo '```'; printf '%s\n%s\n' "$block" "$recap"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$rc" -ne 0 ] || [ -z "$block" ] || ! printf '%s' "$recap" | grep -q 'failed=0' \
+               || ! printf '%s' "$recap" | grep -q 'unreachable=0'; then
+              echo "::error title=media-updates::indexers-check did not finish cleanly (ansible exit $rc)"; exit 1
+            fi
+            exit 0
+          fi
           m="===== MEDIA UPDATE REPORT"
           echo "$m BEGIN ====="
           if [ -s "$CI/out/report.txt" ]; then cat "$CI/out/report.txt"

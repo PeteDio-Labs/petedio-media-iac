@@ -11,7 +11,9 @@
 #
 #   ansible-playbook playbooks/media-roles.yml --limit prowlarr --tags indexers
 #
-# Add `--check --diff` for a read-only drift report, and run that first. Expect
+# Add `--check --diff` for a read-only drift report, and run that first. Without SSH to
+# CT 109, dispatch media-updates.yml with `mode=indexers-check target=prowlarr` (PET-911): it
+# runs `--check --tags indexers` on the runner and prints the report below. Expect
 # it to report no drift: the declaration matches the live state the vault note
 # Practices/indexers-and-fake-releases.md records. Under --check the GET runs and
 # the PUT does not.
