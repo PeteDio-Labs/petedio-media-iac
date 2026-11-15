@@ -174,7 +174,7 @@
     that:
       - >-
         (plex_remote_net_rules.stdout | regex_findall('(?m)^' ~ plex_remote_net_rule_priority
-         ~ ':\s+from all iif ' ~ plex_remote_net_bridge ~ ' lookup ' ~ plex_remote_net_table ~ '\b'))
+         ~ ':\s+from all iif ' ~ plex_remote_net_bridge ~ ' lookup ' ~ plex_remote_net_table ~ '$'))
         | length == 1
       - >-
         (plex_remote_net_rules.stdout | regex_findall('(?m)^' ~ (plex_remote_net_rule_priority + 1)
