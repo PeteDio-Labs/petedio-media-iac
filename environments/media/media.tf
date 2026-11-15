@@ -273,6 +273,7 @@ module "plex_remote" {
   # 32G, the same as plex-gpu: a fresh server downloads artwork and metadata for
   # the whole library.
   disk_size        = 32
+  disk_replicate   = true # the live rootfs carries replicate=1; unset, the provider plans false
   datastore_id     = "local" # pve03 has no thin pool; see PET-334
   target_node      = "pve03"
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst" # pve03's only template

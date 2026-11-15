@@ -54,6 +54,12 @@ variable "disk_size" {
   default     = 4
 }
 
+variable "disk_replicate" {
+  description = "Whether Proxmox includes the root disk in storage replication (the rootfs `replicate` flag). The provider plans false when this is unset, so a guest whose live rootfs carries replicate=1 needs true here to plan no change. plex-remote 244 does, because the provider created it that way (MED-11)."
+  type        = bool
+  default     = false
+}
+
 variable "datastore_id" {
   description = "Proxmox datastore for the root disk. Media hosts vary: local-lvm (most) vs sdb3-storage (sonarr/radarr)."
   type        = string
