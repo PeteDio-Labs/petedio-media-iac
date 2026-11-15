@@ -238,6 +238,65 @@ module "plex_gpu" {
   # mounted and non-empty inside the container and will fail without it.
 }
 
+# plex-remote 244 on pve03: the Plex users already know, moved off pve02 (MED-11).
+# playbooks/migrate-plex-identity.yml copies 236's whole data directory into it,
+# identity and claim included, so remote users change nothing. 236 then starts
+# again as a new, home-only server. This is the interim answer to the upload
+# problem until MED-8. It answers on pve03's wlo1 address and, after the
+# cutover PR, on 236's old address 192.168.86.236, which pve03 takes over on wlo1.
+#
+# WHY IT SITS ON AN ISOLATED BRIDGE. vmbr244 exists only on pve03, carries no
+# physical port, and routes out pve03's WiFi (wlo1). pve03 owns
+# the routing: it DNATs wlo1:32400 to this container and masquerades the
+# container's own egress out wlo1. Inbound traffic is NOT source-NATed, so Plex
+# sees each remote client's real address, files it as remote, and applies the
+# upload caps. The container has no path to the .50 LAN. Ansible declares the
+# bridge, the policy routing and the nftables rules: roles/plex-remote-net, run by
+# playbooks/configure-plex-remote-net.yml. Run that play BEFORE this merges,
+# because the create fails on a bridge that does not exist.
+#
+# VMID 244 reuses tailscale-244's number, which died with pve01. The container
+# address inside vmbr244 repeats the number.
+module "plex_remote" {
+  source = "../../modules/proxmox-lxc"
+
+  vm_id        = 244
+  hostname     = "plex-remote"
+  ipv4_address = "10.244.0.244/24"
+  gateway      = "10.244.0.1" # pve03's address on vmbr244
+  bridge       = "vmbr244"
+  # nftables on pve03 filters this container's traffic (roles/plex-remote-net),
+  # so the PVE firewall stays off, as it does on plex-gpu.
+  firewall = false
+  # Public resolvers: the container cannot reach the .50 router at 192.168.50.1.
+  dns_servers      = ["1.1.1.1", "9.9.9.9"]
+  cores            = 4
+  memory_dedicated = 3072
+  memory_swap      = 1024
+  # 32G, the same as plex-gpu: a fresh server downloads artwork and metadata for
+  # the whole library.
+  disk_size        = 32
+  datastore_id     = "local" # pve03 has no thin pool; see PET-334
+  target_node      = "pve03"
+  template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst" # pve03's only template
+
+  ssh_public_key = var.ssh_public_key
+  description    = "Plex that carries 236's moved identity (MED-11). Iris Xe Quick Sync. Media stack — managed by petedio-media-iac."
+
+  # NO device_passthrough AND NO mount_points HERE, for the reason plex_gpu gives
+  # above: both are root@pam-only, and the provider holds an API token.
+  # petedio-iac's playbooks/configure-lxc-passthrough.yml (MED-14) sets them with `pct set`
+  # on pve03, and configure-lxc-features.yml sets nesting:
+  #
+  #   mp0:      /mnt/media -> /mnt/media, read-only, shared=1
+  #   dev0:     /dev/dri/renderD129, gid=44, mode=0660
+  #   features: nesting=1
+  #
+  # ⚠ renderD129, NOT renderD128. On pve03 renderD128 is the RTX 3050
+  # (pci-0000:01:00.0, nouveau, no hardware encode). The Iris Xe is
+  # pci-0000:00:02.0, which /dev/dri/by-path maps to renderD129.
+}
+
 # sonarr 104/.15 on pve03 — `local` 4G, vmbr0
 module "sonarr" {
   source = "../../modules/proxmox-lxc"
@@ -380,6 +439,7 @@ output "media_vm_ids" {
   value = {
     seerr           = module.seerr.vm_id
     plex_gpu        = module.plex_gpu.vm_id
+    plex_remote     = module.plex_remote.vm_id
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
     prowlarr        = module.prowlarr.vm_id

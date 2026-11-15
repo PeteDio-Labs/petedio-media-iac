@@ -1,0 +1,68 @@
+# plex-remote 244/10.244.0.244 on pve03 (MED-11). It takes over the home server's
+# identity: playbooks/migrate-plex-identity.yml copies 236's whole data directory
+# in, so remote users keep the server they already have. pve03 then answers on
+# 192.168.86.236, the address plex.tv advertises, and DNATs it here
+# (plex_remote_net_takeover_ip). 236 starts again clean, as a new home-only server.
+# The library is the same NFS share, bound in read-only by petedio-iac's playbooks/configure-lxc-passthrough.yml (petedio-iac, MED-14).
+---
+# Lifecycle (stack-up / stack-down / stack-power), as host_vars/plex-gpu.yml.
+media_service_unit: plexmediaserver
+media_health_port: 32400
+media_in_use_probe: plex
+plex_port: 32400
+plex_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# ⚠ renderD129 on pve03. renderD128 is the RTX 3050, on nouveau, which has no
+# usable hardware encode. the passthrough play in petedio-iac proves the PCI path before it
+# passes the node in.
+plex_bootstrap_render_node: /dev/dri/renderD129
+
+# Install Plex and leave it stopped. The package's first start mints a fresh
+# identity, and this server must start only with 236's, after the migration.
+plex_bootstrap_start: false
+
+# --- playback limits (roles/plex-settings) -----------------------------------
+# Remote clients get the ceilings below. Home clients that still use this
+# identity reach it on 192.168.86.236 as LAN clients, so the caps skip them, and
+# only plex_remote_net_egress_kbit polices them.
+plex_settings_treat_wan_as_local: false
+
+# THE UPLOAD CAPS, in kbps. The house upload is about 30-33 Mbps, and the home
+# Plex and the rest of the house share it. The total leaves about a third free.
+# The per-stream cap lets two full-rate streams run together.
+# roles/plex-remote-net polices the wire at plex_remote_net_egress_kbit, a little
+# above the total, as the backstop.
+plex_settings_wan_total_max_kbps: 20000
+plex_settings_wan_per_stream_max_kbps: 10000
+
+# The address 236 advertised before the move, and the one pve03 takes over. plex.tv
+# refuses every republish from this identity with 403 (see the plex_gpu module in
+# environments/media/media.tf), so the advertised address must stay what it was.
+plex_settings_custom_connections:
+  - http://192.168.86.236:32400
+
+# Remote access, with the external port the router forwards. Relay off: a relayed
+# stream is capped at 2 Mbps by Plex and hides a broken forward.
+plex_settings_extra_prefs:
+  PublishServerOnPlexOnlineKey: 1
+  ManualPortMappingMode: 1
+  ManualPortMappingPort: 32400
+  RelayEnabled: 0
+
+# --- libraries (roles/plex-libraries) -----------------------------------------
+# The same two libraries as 236, read from 236 on 2026-11-14. The migrated
+# database already holds them, so this role finds both and creates nothing.
+plex_libraries:
+  - name: Movies
+    type: movie
+    agent: tv.plex.agents.movie
+    scanner: Plex Movie
+    language: en-US
+    location: /mnt/media/movies
+  - name: TV Shows
+    type: show
+    agent: tv.plex.agents.series
+    scanner: Plex TV Series
+    language: en-US
+    location: /mnt/media/tv-shows

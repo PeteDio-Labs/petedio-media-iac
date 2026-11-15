@@ -1,0 +1,78 @@
+---
+# plex-remote-net — the network on pve03 for plex-remote 244, the Plex that
+# carries 236's moved identity (MED-11).
+#
+# THE SHAPE (option D). 244 sits alone on an isolated bridge with no physical
+# port. pve03 routes it, and only through wlo1, the WiFi NIC on the .86 network
+# whose router holds the external 32400 forward:
+#
+#     internet -> router :32400 -> 192.168.86.236:32400 (wlo1, after the takeover)
+#              -> DNAT -> 10.244.0.244:32400 (vmbr244) -> Plex
+#
+# The router forwards to pve03's wlo1 address. nftables rewrites the destination to
+# the guest and leaves the source alone, so Plex sees the real client address and
+# files every client as remote. No inbound SNAT.
+#
+# THE RETURN PATH IS THE HARD PART. pve03's main table sends everything out vmbr0,
+# the .50 network, metric 0. A reply from the guest would follow it, leave by the
+# wrong router, and die there. So a policy rule sends every packet that arrives on
+# vmbr244 to its own table, which holds one default route, out wlo1. A second rule
+# right after it makes the rest unreachable: if wlo1 loses its lease, the guest
+# goes dark instead of leaking out vmbr0.
+#
+# The table's routes come from a NetworkManager dispatcher script, because wlo1
+# takes its address and gateway by DHCP and NetworkManager owns it. The script runs
+# on every lease, so a new gateway reaches the table without a play.
+#
+# WHAT THE GUEST MAY REACH. Only the internet, over wlo1. The forward filter drops
+# any new connection to a private range, so 244 cannot reach the .50 or .86
+# networks, the mesh or pve03's own services. The one way in is TCP 32400 from
+# wlo1, DNAT'd.
+#
+# ⚠ NEVER ENABLE nftables.service ON A NODE. Debian's /etc/nftables.conf starts with
+# `flush ruleset`, which would delete this table along with anything else in
+# nftables. This role loads its own table from its own unit and touches no other.
+
+plex_remote_net_bridge: vmbr244
+plex_remote_net_bridge_address: 10.244.0.1/24
+plex_remote_net_guest_subnet: 10.244.0.0/24
+plex_remote_net_guest_ip: 10.244.0.244
+
+# The uplink and its subnet. The subnet route is in the table so the gateway
+# resolves; the forward filter still drops new connections into it.
+plex_remote_net_wan_if: wlo1
+plex_remote_net_wan_subnet: 192.168.86.0/24
+
+plex_remote_net_table: 244
+plex_remote_net_rule_priority: 1000   # lookup the table; +1 is the unreachable rule
+
+plex_remote_net_port: 32400
+
+# THE HARD UPLOAD BACKSTOP, in kbit/s. Plex's own caps (host_vars/plex-remote.yml)
+# decide what each stream is encoded at. They count the bitrate Plex chose, not the
+# bytes on the wire, so a burst or a misjudged file can exceed them. This class
+# polices the wire: every packet the guest sends out wlo1 is marked, and an HTB
+# class caps the marked traffic at this rate. pve03's own traffic on wlo1 goes to
+# an unshaped default class. 0 removes the class and the root qdisc.
+#
+# Set it a little above Plex's total cap, so Plex's cap governs and this one only
+# catches what slips past it. The house upload is about 30-33 Mbps.
+plex_remote_net_egress_kbit: 24000
+plex_remote_net_egress_mark: "0x244"
+
+# THE .236 TAKEOVER. plex-gpu 236's old LAN address, held on wlo1 beside the DHCP
+# lease, so the router's forward and every client that remembers the address
+# reach 244 (MED-11). Empty means none: the cutover PR sets it in
+# host_vars/pve03.yml, and a rollback empties it again. A run removes any
+# candidate the profile holds that is not the declared one.
+plex_remote_net_takeover_ip: ""
+plex_remote_net_takeover_candidates:
+  - 192.168.86.236/24
+
+# Paths.
+plex_remote_net_interfaces_file: /etc/network/interfaces.d/plex-remote
+plex_remote_net_nm_conf: /etc/NetworkManager/conf.d/15-unmanaged-plex-remote.conf
+plex_remote_net_dispatcher: /etc/NetworkManager/dispatcher.d/50-plex-remote
+plex_remote_net_nft_dir: /etc/plex-remote
+plex_remote_net_nft_file: /etc/plex-remote/nftables.nft
+plex_remote_net_nft_unit: plex-remote-nft

@@ -37,3 +37,32 @@ plex_prefs_path: >-
 # which pve03 holds for plex-remote 244.
 plex_settings_custom_connections:
   - http://192.168.86.253:32400
+
+# --- libraries (roles/plex-libraries) -----------------------------------------
+# The same two libraries 236 held before MED-11 moved its identity to plex-remote 244.
+# reset-plex-gpu.yml starts 236 on an empty data directory, so a new server has none.
+# configure-plex-settings.yml creates them once Pedro has claimed the server. Read
+# from 236 on 2026-11-14.
+plex_libraries:
+  - name: Movies
+    type: movie
+    agent: tv.plex.agents.movie
+    scanner: Plex Movie
+    language: en-US
+    location: /mnt/media/movies
+  - name: TV Shows
+    type: show
+    agent: tv.plex.agents.series
+    scanner: Plex TV Series
+    language: en-US
+    location: /mnt/media/tv-shows
+
+# --- scanning prefs ------------------------------------------------------------
+# The reset writes a fresh Preferences.xml, so the scan settings that roles/plex-bootstrap
+# set once through the API are gone, and the library goes stale. inotify cannot see NFS
+# writes, so scheduled scanning is the only thing that notices new media. These match
+# plex-bootstrap's defaults (plex_bootstrap_scan_interval is seconds, hourly).
+plex_settings_extra_prefs:
+  ScheduledLibraryUpdatesEnabled: 1
+  ScheduledLibraryUpdateInterval: 3600
+  FSEventLibraryUpdatesEnabled: 0

@@ -25,6 +25,7 @@ locals {
   media_pool_members = var.manage_resource_pool ? {
     seerr           = module.seerr.vm_id
     plex_gpu        = module.plex_gpu.vm_id
+    plex_remote     = module.plex_remote.vm_id
     sonarr          = module.sonarr.vm_id
     radarr          = module.radarr.vm_id
     prowlarr        = module.prowlarr.vm_id
@@ -38,4 +39,15 @@ resource "proxmox_pool_membership" "media" {
 
   pool_id = var.resource_pool_id
   vm_id   = each.value
+}
+
+# Adopt plex-remote 244's pool membership (MED-11). The apply of #80 created container 244
+# and Proxmox already lists it in pool `homelab`, but the membership never reached state, so
+# the next plan tried to add it and the add failed. This block imports it instead of leaving
+# a hand fix: id is `{pool_id}/{type}/{member_id}`, and the type for a guest is `vm`.
+# The block does nothing once the membership is in state. Remove it in a later PR.
+import {
+  for_each = var.manage_resource_pool ? toset(["plex_remote"]) : toset([])
+  to       = proxmox_pool_membership.media[each.key]
+  id       = "${var.resource_pool_id}/vm/${module.plex_remote.vm_id}"
 }

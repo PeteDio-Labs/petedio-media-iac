@@ -1,0 +1,66 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# petedio-media-iac roles/plex-remote-net (MED-11). One table, loaded by
+# {{ plex_remote_net_nft_unit }}.service. The first two lines make a reload atomic: they
+# create the table if it is missing, then delete it, inside the same transaction
+# that defines it again. Nothing outside this table is touched.
+
+table inet plex_remote
+delete table inet plex_remote
+
+table inet plex_remote {
+        # Destinations a NEW connection from the guest may not reach.
+        set private4 {
+                type ipv4_addr
+                flags interval
+                elements = {
+                        0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+                        169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16,
+                        224.0.0.0/4, 240.0.0.0/4,
+                }
+        }
+
+        # The one way in. The source stays the client's, so Plex sees it as remote.
+        chain prerouting {
+                type nat hook prerouting priority dstnat; policy accept;
+                iifname "{{ plex_remote_net_wan_if }}" tcp dport {{ plex_remote_net_port }} dnat ip to {{ plex_remote_net_guest_ip }}:{{ plex_remote_net_port }}
+        }
+
+        # The guest's own outbound connections leave as pve03's wlo1 address.
+        # Replies to inbound connections are un-DNAT'd by conntrack instead.
+        chain postrouting {
+                type nat hook postrouting priority srcnat; policy accept;
+                oifname "{{ plex_remote_net_wan_if }}" ip saddr {{ plex_remote_net_guest_subnet }} masquerade
+        }
+
+        chain forward {
+                type filter hook forward priority filter; policy accept;
+                iifname "{{ plex_remote_net_bridge }}" jump from_guest
+                oifname "{{ plex_remote_net_bridge }}" jump to_guest
+        }
+
+        chain from_guest {
+                meta nfproto ipv6 drop
+                oifname != "{{ plex_remote_net_wan_if }}" counter drop
+                # Mark for the HTB backstop before any accept, so every byte counts.
+                meta mark set {{ plex_remote_net_egress_mark }}
+                ct state established,related counter accept
+                ip daddr @private4 counter drop
+                counter accept
+        }
+
+        chain to_guest {
+                iifname "{{ plex_remote_net_wan_if }}" ct state established,related accept
+                iifname "{{ plex_remote_net_wan_if }}" ct status dnat tcp dport {{ plex_remote_net_port }} counter accept
+                counter drop
+        }
+
+        # The guest may answer pve03 (Ansible reaches it through pve03) and nothing
+        # else on the host.
+        chain input {
+                type filter hook input priority filter; policy accept;
+                iifname "{{ plex_remote_net_bridge }}" ct state established,related accept
+                iifname "{{ plex_remote_net_bridge }}" icmp type echo-request accept
+                iifname "{{ plex_remote_net_bridge }}" counter drop
+        }
+}
