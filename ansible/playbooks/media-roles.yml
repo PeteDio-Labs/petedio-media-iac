@@ -36,8 +36,11 @@
 #
 # 236 stays outside the `media` group, so media-base does not converge it. This
 # play names the host instead; folding it into `media` is a separate decision.
+# plex-remote (244) runs the same role since MED-16: it carries 236's old identity and
+# friends stream from it. It sits in `remote-media`, outside `media`, for the same reason.
+# The role's viewer guard runs per host, so a stream on one server does not block the other.
 - name: Plex
-  hosts: plex-gpu
+  hosts: plex-gpu:plex-remote
   gather_facts: false
   roles:
     - plex
@@ -65,11 +68,11 @@
   roles:
     - qbittorrent-vpn
 
-# gpu-media is listed so the report still renders under --limit plex-gpu. With
-# `hosts: media` alone that limit matched nothing here, and the run ended with no
-# report at all.
+# gpu-media and remote-media are listed so the report still renders under --limit plex-gpu
+# or plex-remote. With `hosts: media` alone that limit matched nothing here, and the run
+# ended with no report at all.
 - name: Update report
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   gather_facts: false
   tasks:
     - name: Render the media stack update report

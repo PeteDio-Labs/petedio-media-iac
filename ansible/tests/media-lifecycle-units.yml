@@ -17,7 +17,7 @@
 # assertions can.
 ---
 - name: Lifecycle units — the hosts stack-down names resolve to real services
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   connection: local
   gather_facts: false
   become: false
@@ -79,7 +79,7 @@
       ansible.builtin.assert:
         that: inventory_hostname in stack_down_targets
         fail_msg: >-
-          {{ inventory_hostname }} is in media:gpu-media but no stack-down play
+          {{ inventory_hostname }} is in media:gpu-media:remote-media but no stack-down play
           names it, so stack-down.yml leaves it running.
         success_msg: "{{ inventory_hostname }} is named by a stack-down play"
 
@@ -124,10 +124,10 @@
       ansible.builtin.assert:
         that: (resolved_probe | trim) != ''
         fail_msg: >-
-          plex-gpu declares no media_in_use_probe, so stack-down would stop the
-          only Plex without asking whether anyone is watching.
-        success_msg: "plex-gpu guards with in-use-{{ resolved_probe }}.yml"
-      when: inventory_hostname == 'plex-gpu'
+          {{ inventory_hostname }} declares no media_in_use_probe, so stack-down would stop
+          a Plex without asking whether anyone is watching.
+        success_msg: "{{ inventory_hostname }} guards with in-use-{{ resolved_probe }}.yml"
+      when: inventory_hostname in ['plex-gpu', 'plex-remote']
 
 # ------------------------------------------------------------------------------
 # stack-power.yml holds the only hand-written VMID map in the repo, and the one
@@ -152,7 +152,7 @@
     power_stop_task: >-
       {{ power_plays | map(attribute='tasks') | first | default([])
          | selectattr('name', 'equalto', 'Stop the media containers') | first | default({}) }}
-    managed_hosts: "{{ (groups['media'] | default([])) + (groups['gpu-media'] | default([])) }}"
+    managed_hosts: "{{ (groups['media'] | default([])) + (groups['gpu-media'] | default([])) + (groups['remote-media'] | default([])) }}"
   tasks:
     # 5. Each entry says which host it is powering off. Without that key the map
     #    cannot be checked against anything, and the power-off cannot read a guard.
@@ -174,7 +174,7 @@
         that: power_hosts | difference(managed_hosts) | length == 0
         fail_msg: >-
           stack-power.yml powers off {{ power_hosts | difference(managed_hosts) }},
-          which match no host in media:gpu-media. A stale map powers off a VMID
+          which match no host in media:gpu-media:remote-media. A stale map powers off a VMID
           nobody is guarding.
         success_msg: "the power-off map names {{ power_hosts | join(', ') }}"
 
@@ -182,7 +182,7 @@
       ansible.builtin.assert:
         that: managed_hosts | difference(power_hosts) | length == 0
         fail_msg: >-
-          {{ managed_hosts | difference(power_hosts) }} are in media:gpu-media but
+          {{ managed_hosts | difference(power_hosts) }} are in media:gpu-media:remote-media but
           absent from stack-power.yml, so `-e power=off` leaves them running and
           reclaims none of their RAM.
         success_msg: "all {{ managed_hosts | length }} managed hosts are in the map"

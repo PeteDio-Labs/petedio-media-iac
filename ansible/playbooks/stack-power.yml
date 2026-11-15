@@ -45,7 +45,7 @@
 #
 # `set_fact` runs on the controller, so this play opens no connection.
 - name: Record which hosts the graceful shutdown cleared
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   gather_facts: false
   tasks:
     - name: Mark this host clear to power off
@@ -81,6 +81,7 @@
     # verdict recorded above. Without it this loop has no way to ask whether the
     # service on that container actually stopped (PET-447).
     media_power_shutdown_order:
+      - { vmid: 244, node: pve03, host: plex-remote }      # consumer, friends stream from it (MED-16)
       - { vmid: 236, node: pve02, host: plex-gpu }         # consumer
       - { vmid: 101, node: pve03, host: seerr }            # consumer
       - { vmid: 222, node: pve03, host: bazarr }           # subtitles; reads sonarr and radarr
@@ -127,7 +128,7 @@
 
     - name: Show media container states
       ansible.builtin.debug:
-        msg: "{{ pct_list.stdout_lines | select('search', '(101|104|105|109|110|222|236)') | list }}"
+        msg: "{{ pct_list.stdout_lines | select('search', '(101|104|105|109|110|222|236|244)') | list }}"
 
 # Containers need a moment for sshd before Ansible can reach them; stack-up's
 # per-tier port waits absorb the rest.
@@ -135,7 +136,7 @@
 # one container that had just been started and handed straight to stack-up.yml,
 # which then reached for a Plex whose sshd might not be listening (PET-447).
 - name: Wait for the containers to accept SSH
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   gather_facts: false
   tasks:
     - name: Wait for SSH
