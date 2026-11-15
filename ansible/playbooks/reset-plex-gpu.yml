@@ -121,7 +121,7 @@
         that:
           - >-
             (plex_reset_live_raw.content | b64decode
-             | regex_findall('\sMachineIdentifier="([^"]+)"') | first | default(''))
+             | regex_findall('\sProcessedMachineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') != plex_reset_moved_sha
         fail_msg: >-
           236's live data directory carries the moved identity. Starting it would run

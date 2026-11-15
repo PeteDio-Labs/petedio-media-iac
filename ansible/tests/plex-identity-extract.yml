@@ -17,14 +17,27 @@
     - ../inventory/host_vars/plex-gpu.yml
   vars:
     # The decoys come first, as they can in a real Preferences.xml: a pattern that is not
-    # anchored on the preceding space returns the decoy's value.
-    prefs: '<Preferences ProcessedMachineIdentifier="decoy1" AnonymousMachineIdentifier="decoy2" MachineIdentifier="abc123" PlexOnlineToken="x"/>'
+    # anchored on the preceding space returns the decoy's value. /identity answers with
+    # ProcessedMachineIdentifier, never MachineIdentifier (MED-11), so the plain
+    # MachineIdentifier is a decoy too.
+    prefs: '<Preferences MachineIdentifier="decoy0" AnonymousMachineIdentifier="decoy2" ProcessedMachineIdentifier="abc123" PlexOnlineToken="x"/>'
     identity: '<MediaContainer xmachineIdentifier="decoy" machineIdentifier="abc123" claimed="1"/>'
     marker: "Migrated.\nsource machine identifier sha256: {{ 'a' * 64 }}\n"
   tasks:
-    - name: Preferences.xml yields its identifier
+    - name: Preferences.xml yields the identifier /identity answers with
       ansible.builtin.assert:
-        that: (prefs | regex_findall('\\sMachineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
+        that: (prefs | regex_findall('\\sProcessedMachineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
+
+    # Each playbook reads Preferences.xml by the processed name only. Reading the plain
+    # MachineIdentifier compares a value /identity never returns.
+    - name: No playbook reads the plain MachineIdentifier from Preferences.xml
+      ansible.builtin.assert:
+        that:
+          - (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/' ~ item)
+             | regex_findall('sMachineIdentifier=') | length) == 0
+          - (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/' ~ item)
+             | regex_findall('sProcessedMachineIdentifier=') | length) == 1
+      loop: [migrate-plex-identity.yml, reset-plex-gpu.yml]
 
     - name: /identity yields its identifier
       ansible.builtin.assert:

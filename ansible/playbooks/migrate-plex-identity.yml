@@ -3,7 +3,8 @@
 # (pve03), so remote users keep the server they already have (MED-11).
 #
 # It copies 236's whole data directory, Preferences.xml included. That file holds
-# the server's identity (MachineIdentifier, CertificateUUID) and its plex.tv
+# the server's identity (MachineIdentifier, ProcessedMachineIdentifier,
+# CertificateUUID) and its plex.tv
 # account (PlexOnlineToken), so after the copy 244 IS the server users know.
 #
 # TWO SERVERS MUST NEVER RUN WITH ONE IDENTITY. So this play:
@@ -99,11 +100,14 @@
       register: plex_migrate_src_prefs
       no_log: true
 
+    # ProcessedMachineIdentifier, not MachineIdentifier: /identity answers with the
+    # processed value, so it is the one every later check can compare. MED-11's first
+    # real run hashed MachineIdentifier and failed the post-start assertion on a good copy.
     - name: Record the source identity as a hash
       ansible.builtin.set_fact:
         plex_migrate_src_id_sha: >-
           {{ (plex_migrate_src_prefs.content | b64decode
-              | regex_findall('\sMachineIdentifier="([^"]+)"') | first | default(''))
+              | regex_findall('\sProcessedMachineIdentifier="([^"]+)"') | first | default(''))
              | hash('sha256') }}
         plex_migrate_src_claimed: >-
           {{ (plex_migrate_src_prefs.content | b64decode)
@@ -116,7 +120,7 @@
           - plex_migrate_src_id_sha != ('' | hash('sha256'))
           - plex_migrate_src_claimed | bool
         fail_msg: >-
-          Preferences.xml on {{ inventory_hostname }} has no MachineIdentifier or no
+          Preferences.xml on {{ inventory_hostname }} has no ProcessedMachineIdentifier or no
           PlexOnlineToken, so there is no identity to move.
         success_msg: "Source identity sha256 {{ plex_migrate_src_id_sha[:16] }}, claimed."
 
