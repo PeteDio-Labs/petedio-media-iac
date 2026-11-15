@@ -20,12 +20,19 @@
 # lives in the primary's Preferences.xml; copying it into Vault would create a
 # second thing to rotate and a third place to leak it from.
 #
-# TARGET FOLLOWS plex_primary, the same variable plex-primary.yml uses, so a
-# failover repoints these connections rather than leaving them aimed at a server
-# that is deliberately stopped.
+# ONE CONNECTION PER PLEX SERVER (MED-11). plex-gpu (236) and plex-remote (244)
+# read the same library, so each import notifies both. Each connection is named
+# after its server, and the role matches by name, so a run never repoints one
+# server's connection at the other. plex_connect_targets in the role defaults
+# lists them, and the first play below reads the same list.
+#
+# EACH SERVER'S ADDRESS IS THE ONE SONARR AND RADARR REACH. That is the
+# inventory's ansible_host unless a host sets plex_connect_address. plex-remote
+# does: Ansible reaches it at 10.244.0.244 through pve03, but the apps reach it at
+# 192.168.86.236, which pve03 forwards to it.
 
-- name: Read the current primary's token and address
-  hosts: "{{ plex_primary | default('plex-gpu') }}"
+- name: Read each Plex server's token and the address the apps reach it at
+  hosts: "{{ plex_connect_targets | default(['plex-gpu', 'plex-remote']) }}"
   gather_facts: false
   become: true
   tasks:
@@ -35,25 +42,24 @@
       register: pc_prefs
       no_log: true
 
+    # regex_findall, not regex_search with a group: see roles/plex-settings/tasks.
     - name: Extract the token
       ansible.builtin.set_fact:
-        plex_auth_token: "{{ (pc_prefs.content | b64decode | regex_search('PlexOnlineToken=\"([^\"]+)\"', '\\1') | first) }}"
-        plex_host_ip: "{{ ansible_host }}"
+        plex_auth_token: >-
+          {{ (pc_prefs.content | b64decode
+              | regex_findall('PlexOnlineToken="([^"]+)"') or ['']) | first }}
+        plex_host_ip: "{{ plex_connect_address | default(ansible_host) }}"
       no_log: true
 
     - name: Fail early rather than writing an empty token into two apps
       ansible.builtin.assert:
         that: plex_auth_token | length > 10
-        fail_msg: "No PlexOnlineToken on {{ inventory_hostname }} — is the server claimed?"
+        fail_msg: "No PlexOnlineToken on {{ inventory_hostname }}. Is the server claimed?"
 
-- name: Point Sonarr and Radarr at it
-  # lidarr is deliberately absent: it and the Music library are being removed in
-  # this same change, since neither is used.
+- name: Point Sonarr and Radarr at every Plex server
+  # lidarr is deliberately absent: it and the Music library were removed in PET-319.
   hosts: sonarr:radarr
   gather_facts: false
   become: true
-  vars:
-    plex_auth_token: "{{ hostvars[plex_primary | default('plex-gpu')].plex_auth_token }}"
-    plex_host_ip: "{{ hostvars[plex_primary | default('plex-gpu')].plex_host_ip }}"
   roles:
     - plex-connect
