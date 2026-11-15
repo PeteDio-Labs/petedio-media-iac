@@ -1,0 +1,36 @@
+---
+# Shared by migrate-plex-identity.yml, rollback-plex-identity.yml and
+# reset-plex-gpu.yml (MED-11): where Plex keeps its data, and the names of the
+# copies those plays move aside.
+plex_migrate_base: /var/lib/plexmediaserver/Library/Application Support
+plex_migrate_dir: Plex Media Server
+
+plex_migrate_src_vmid: 236
+plex_migrate_dest_vmid: 244
+plex_migrate_dest_node_ssh: root@pve03
+
+# 236's data directory after the move: the rollback copy. Never delete it while
+# 244 serves the identity.
+plex_migrate_src_aside: Plex Media Server.moved-to-plex-remote
+# 244's own fresh install, moved aside to make room for 236's.
+plex_migrate_dest_aside: Plex Media Server.fresh-install
+
+# Written into 244's data directory once the copy is proven and started.
+plex_migrate_marker: .migrated-from-plex-gpu
+
+# Left behind: caches, logs and downloads that Plex rebuilds or fetches again.
+# Codecs and Drivers are fetched for the GPU and version they run on, and 244's
+# GPU is not 236's.
+plex_migrate_excludes:
+  - Cache
+  - Codecs
+  - Crash Reports
+  - Drivers
+  - Logs
+  - Updates
+  - plexmediaserver.pid
+
+# Hashed on both ends. The identity lives in the first, the libraries in the second.
+plex_migrate_verify_files:
+  - Preferences.xml
+  - Plug-in Support/Databases/com.plexapp.plugins.library.db

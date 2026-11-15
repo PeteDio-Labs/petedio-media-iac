@@ -1,15 +1,19 @@
 ---
 # bootstrap-plex-remote.yml — first-run install of Plex on 244 (pve03), the Plex
-# that serves remote users only (MED-11). The same role as bootstrap-plex-gpu.yml,
+# that takes 236's moved identity (MED-11). The same role as bootstrap-plex-gpu.yml,
 # with host_vars/plex-remote.yml pointing it at the Iris Xe's render node.
 #
-# ORDER, after the apply-on-merge creates 244:
+# ORDER, after the apply-on-merge creates 244. 244 takes 236's identity, so
+# nobody claims it fresh:
 #
-#     scripts/lxc-oob-244.sh                                  # bind, render node
-#     ansible-playbook playbooks/bootstrap-plex-remote.yml    # install
-#     scripts/plex-claim-244.sh                               # claim, as Pedro
-#     ansible-playbook playbooks/bootstrap-plex-remote.yml    # again: the scan schedule needs the token
-#     ansible-playbook playbooks/configure-plex-remote.yml    # libraries, caps, remote access
+#     scripts/lxc-oob-244.sh                                   # bind, render node
+#     ansible-playbook playbooks/bootstrap-plex-remote.yml     # install, kept stopped
+#     ansible-playbook playbooks/configure-plex-remote-net.yml # bridge, NAT, caps
+#     ansible-playbook playbooks/migrate-plex-identity.yml -e plex_migrate_confirm=yes
+#     ansible-playbook playbooks/configure-plex-remote.yml     # libraries, caps, remote access
+#
+# The cutover PR then moves 192.168.86.236 to pve03, and reset-plex-gpu.yml plus
+# scripts/plex-claim-236.sh start 236 again as a new server.
 #
 # Run it from a machine that reaches pve03: the inventory jumps through it.
 

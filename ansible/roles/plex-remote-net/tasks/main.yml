@@ -126,6 +126,10 @@
   ansible.builtin.command: ifup {{ plex_remote_net_bridge }}
   changed_when: true
 
+# ---------------------------------------------------------------- takeover --
+- name: Plex remote net — take over plex-gpu's old address
+  ansible.builtin.include_tasks: takeover.yml
+
 # ------------------------------------------------------------ return path --
 - name: Plex remote net — write the dispatcher script
   ansible.builtin.template:

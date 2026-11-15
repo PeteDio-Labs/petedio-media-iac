@@ -1,7 +1,7 @@
 ---
 # configure-plex-remote-net.yml — the network on pve03 for plex-remote 244, the
-# Plex that serves remote users only (MED-11). roles/plex-remote-net/defaults has
-# the design.
+# Plex that carries 236's moved identity (MED-11). roles/plex-remote-net/defaults
+# has the design.
 #
 # RUN IT BEFORE THE MERGE THAT CREATES 244. A merge to main applies Terraform, and
 # the container's NIC attaches to vmbr244, which only this play creates. A merge

@@ -1,6 +1,6 @@
 ---
-# plex-remote-net — the network on pve03 for plex-remote 244, the Plex that serves
-# remote users only (MED-11).
+# plex-remote-net — the network on pve03 for plex-remote 244, the Plex that
+# carries 236's moved identity (MED-11).
 #
 # THE SHAPE (option D). 244 sits alone on an isolated bridge with no physical
 # port. pve03 routes it, and only through wlo1, the WiFi NIC on the .86 network
@@ -59,6 +59,15 @@ plex_remote_net_port: 32400
 # catches what slips past it. The house upload is about 30-33 Mbps.
 plex_remote_net_egress_kbit: 24000
 plex_remote_net_egress_mark: "0x244"
+
+# THE .236 TAKEOVER. plex-gpu 236's old LAN address, held on wlo1 beside the DHCP
+# lease, so the router's forward and every client that remembers the address
+# reach 244 (MED-11). Empty means none: the cutover PR sets it in
+# host_vars/pve03.yml, and a rollback empties it again. A run removes any
+# candidate the profile holds that is not the declared one.
+plex_remote_net_takeover_ip: ""
+plex_remote_net_takeover_candidates:
+  - 192.168.86.236/24
 
 # Paths.
 plex_remote_net_interfaces_file: /etc/network/interfaces.d/plex-remote

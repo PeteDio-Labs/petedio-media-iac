@@ -1,0 +1,163 @@
+---
+# Start plex-gpu 236 again as a NEW, home-only server (MED-11), after
+# migrate-plex-identity.yml moved its old identity to 244.
+#
+# Run it only after pve03 has taken over 192.168.86.236: the cutover PR moved 236
+# to its new address, and configure-plex-remote-net.yml ran with
+# plex_remote_net_takeover_ip set. Before that, a fresh server on 192.168.86.236
+# would answer clients that expect the moved one.
+#
+# The play refuses unless:
+#   - 244 carries the migration marker,
+#   - 236's old data directory sits aside, as the rollback copy,
+#   - 236 no longer holds 192.168.86.236, and
+#   - 192.168.86.236 answers with the moved identity, which proves pve03's DNAT.
+# It then starts Plex on an empty data directory, so Plex mints a new identity,
+# and asserts that the new identity differs from the moved one and is unclaimed.
+#
+# Pedro claims it next with scripts/plex-claim-236.sh, and
+# configure-plex-settings.yml then converges it.
+#
+#   ansible-playbook -i inventory/hosts.yml playbooks/reset-plex-gpu.yml \
+#     -e plex_migrate_confirm=yes </dev/null 2>&1 | cat
+
+- name: Reset plex-gpu — read the moved identity on 244
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: Read the migration marker
+      ansible.builtin.slurp:
+        src: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ plex_migrate_marker }}"
+      register: plex_reset_marker
+
+    - name: Record the moved identity's hash
+      ansible.builtin.set_fact:
+        plex_reset_moved_id_sha: >-
+          {{ plex_reset_marker.content | b64decode
+             | regex_search('sha256: ([0-9a-f]{64})', '\1') | first }}
+
+- name: Reset plex-gpu — start 236 clean
+  hosts: plex-gpu
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  vars:
+    plex_reset_moved_sha: "{{ hostvars['plex-remote'].plex_reset_moved_id_sha }}"
+    plex_reset_takeover_ip: 192.168.86.236
+  tasks:
+    - name: Refuse a real run without the confirmation
+      ansible.builtin.assert:
+        that:
+          - ansible_check_mode or (plex_migrate_confirm | default('')) == 'yes'
+        fail_msg: Re-run with -e plex_migrate_confirm=yes, or add --check to rehearse.
+
+    - name: Read the rollback copy
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
+      register: plex_reset_aside
+
+    - name: Assert the old data directory is aside
+      ansible.builtin.assert:
+        that:
+          - plex_reset_aside.stat.exists
+        fail_msg: >-
+          {{ plex_migrate_src_aside }} is missing on {{ inventory_hostname }}. Run
+          migrate-plex-identity.yml first.
+
+    - name: Read 236's IPv4 addresses
+      ansible.builtin.command:
+        argv: [ip, -4, -o, addr, show, scope, global]
+      register: plex_reset_addrs
+      changed_when: false
+      check_mode: false
+
+    - name: Assert 236 gave up 192.168.86.236
+      ansible.builtin.assert:
+        that:
+          - (plex_reset_takeover_ip ~ '/') not in plex_reset_addrs.stdout
+        fail_msg: >-
+          236 still holds {{ plex_reset_takeover_ip }}. Merge the cutover PR, which
+          readdresses it, before this play.
+
+    - name: Read the identity behind 192.168.86.236
+      ansible.builtin.uri:
+        url: "http://{{ plex_reset_takeover_ip }}:32400/identity"
+        return_content: true
+        timeout: 10
+      register: plex_reset_takeover_identity
+      check_mode: false
+
+    - name: Assert 192.168.86.236 serves the moved identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            (plex_reset_takeover_identity.content
+             | regex_search('machineIdentifier="([^"]+)"', '\1') | first | default(''))
+            | hash('sha256') == plex_reset_moved_sha
+        fail_msg: >-
+          {{ plex_reset_takeover_ip }} does not answer as the moved server. Run
+          configure-plex-remote-net.yml with plex_remote_net_takeover_ip set first.
+
+    - name: Read 236's live data directory
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/Preferences.xml"
+      register: plex_reset_live_prefs
+
+    - name: Read the live Preferences.xml, when one exists
+      ansible.builtin.slurp:
+        src: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/Preferences.xml"
+      register: plex_reset_live_raw
+      no_log: true
+      when: plex_reset_live_prefs.stat.exists
+
+    - name: Refuse a live data directory that carries the moved identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            (plex_reset_live_raw.content | b64decode
+             | regex_search('MachineIdentifier="([^"]+)"', '\1') | first | default(''))
+            | hash('sha256') != plex_reset_moved_sha
+        fail_msg: >-
+          236's live data directory carries the moved identity. Starting it would run
+          the identity twice.
+      when: plex_reset_live_prefs.stat.exists
+
+    - name: Enable and start Plex on a clean data directory
+      ansible.builtin.systemd_service:
+        name: plexmediaserver
+        enabled: true
+        state: started
+
+    - name: Read the new identity
+      ansible.builtin.uri:
+        url: http://127.0.0.1:32400/identity
+        return_content: true
+      register: plex_reset_new_identity
+      retries: 36
+      delay: 5
+      until: plex_reset_new_identity.status | default(0) == 200
+      when: not ansible_check_mode
+
+    - name: Assert 236 is a new server
+      ansible.builtin.assert:
+        that:
+          - >-
+            (plex_reset_new_identity.content
+             | regex_search('machineIdentifier="([^"]+)"', '\1') | first | default(''))
+            | hash('sha256') != plex_reset_moved_sha
+        fail_msg: 236 answers with the moved identity. Stop it now.
+        success_msg: 236 runs a new identity.
+      when: not ansible_check_mode
+
+    - name: Report whether it is claimed
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Claimed.' if plex_reset_new_identity.content is search('claimed="1"')
+             else 'Unclaimed. Pedro claims it with scripts/plex-claim-236.sh, then run configure-plex-settings.yml --limit plex-gpu.' }}
+      when: not ansible_check_mode

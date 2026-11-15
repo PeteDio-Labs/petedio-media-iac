@@ -235,10 +235,12 @@ module "plex_gpu" {
   # mounted and non-empty inside the container and will fail without it.
 }
 
-# plex-remote 244 on pve03: a SECOND Plex that serves remote users only (MED-11).
-# plex-gpu 236 on pve02 stays the home Plex. This is the interim answer to the
-# upload problem until MED-8; it does not reverse the case against moving Plex
-# to pve03 made at the top of this file, because 236 does not move.
+# plex-remote 244 on pve03: the Plex users already know, moved off pve02 (MED-11).
+# playbooks/migrate-plex-identity.yml copies 236's whole data directory into it,
+# identity and claim included, so remote users change nothing. 236 then starts
+# again as a new, home-only server. This is the interim answer to the upload
+# problem until MED-8. It answers on 192.168.86.244 and, after the cutover PR, on
+# 236's old address 192.168.86.236, which pve03 takes over on wlo1.
 #
 # WHY IT SITS ON AN ISOLATED BRIDGE. vmbr244 exists only on pve03, carries no
 # physical port, and routes out pve03's WiFi (wlo1, 192.168.86.244). pve03 owns
@@ -276,7 +278,7 @@ module "plex_remote" {
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst" # pve03's only template
 
   ssh_public_key = var.ssh_public_key
-  description    = "Plex for remote users only (MED-11). Iris Xe Quick Sync. Media stack — managed by petedio-media-iac."
+  description    = "Plex that carries 236's moved identity (MED-11). Iris Xe Quick Sync. Media stack — managed by petedio-media-iac."
 
   # NO device_passthrough AND NO mount_points HERE, for the reason plex_gpu gives
   # above: both are root@pam-only, and the provider holds an API token.
