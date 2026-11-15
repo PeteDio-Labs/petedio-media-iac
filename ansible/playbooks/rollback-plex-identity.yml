@@ -5,6 +5,8 @@
 # It also moves 244's copy of the identity aside and removes the migration marker
 # with it, so a retried migration runs in full.
 #
+# It checks 236 first and refuses before it touches 244.
+#
 # It works only while 236's data directory is still aside, which is until
 # reset-plex-gpu.yml has started 236 clean. After that, 236 holds a second
 # server's data, and this play refuses rather than mix the two.
@@ -15,6 +17,35 @@
 #
 #   ansible-playbook -i inventory/hosts.yml playbooks/rollback-plex-identity.yml \
 #     -e plex_migrate_confirm=yes </dev/null 2>&1 | cat
+
+- name: Roll back the Plex identity — check that 236 is not a second server
+  # First, before anything on 244 moves. A rollback that finds 236 already reset
+  # would otherwise empty 244 and then refuse.
+  hosts: plex-gpu
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: Read 236's live data directory
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+      register: plex_rollback_live
+
+    - name: Read 236's aside copy
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
+      register: plex_rollback_aside
+
+    - name: Refuse when 236 already runs a second server
+      ansible.builtin.assert:
+        that:
+          - not (plex_rollback_live.stat.exists and plex_rollback_aside.stat.exists)
+        fail_msg: >-
+          236 holds both a live data directory and the aside copy, so
+          reset-plex-gpu.yml has run and 236 is a second server. This play will
+          not choose between the two. Decide which server 236 runs first.
 
 - name: Roll back the Plex identity — stop 244
   hosts: plex-remote
@@ -83,25 +114,6 @@
   vars_files:
     - vars/plex-migrate.yml
   tasks:
-    - name: Read 236's live data directory
-      ansible.builtin.stat:
-        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
-      register: plex_rollback_live
-
-    - name: Read 236's aside copy
-      ansible.builtin.stat:
-        path: "{{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
-      register: plex_rollback_aside
-
-    - name: Refuse when 236 already runs a second server
-      ansible.builtin.assert:
-        that:
-          - not (plex_rollback_live.stat.exists and plex_rollback_aside.stat.exists)
-        fail_msg: >-
-          236 holds both a live data directory and the aside copy, so
-          reset-plex-gpu.yml has run and 236 is a second server. This play will
-          not choose between the two. Decide which server 236 runs first.
-
     - name: Put 236's data directory back
       ansible.builtin.command:
         argv:
