@@ -61,7 +61,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 # host -> ip. Mirrors ansible/inventory/hosts.yml. These legacy IPs are permanent,
 # not interim: the renumber to the 21x block (PET-49) was CANCELED, not deferred.
 #
-# `plex` is 192.168.86.236 (VMID 236, plex-gpu, pve02; .86-only since PET-504) and NOT the .140 this map
+# `plex` is 192.168.86.253 (VMID 236, plex-gpu, pve02; .86-only since PET-504) and NOT the .140 this map
 # carried until PET-354. Plex 103 at .140 died with pve01 on 2026-09-03 and was not
 # rebuilt, so the four plex probes had been reporting a hard NO against an address
 # that answers nothing. The probe technique itself was never wrong: read the token
@@ -72,6 +72,10 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 # prowlarr are on pve03 now, qbittorrent-vpn and plex-gpu on pve02. Nothing in this
 # map depends on the node, which is why only plex needed a change.
 #
+# ⚠ 192.168.86.236 is NOT plex-gpu since the MED-11 cutover (2026-11-15): pve03 holds it and
+# DNATs port 32400 to plex-remote (244), so SSH to it lands on pve03. This probe reads the
+# home server, plex-gpu, over SSH. plex-remote sits behind pve03 and has no probe here.
+#
 # `case` rather than the obvious `declare -A` because associative arrays are bash 4+
 # and macOS ships 3.2. Under `set -u` the failed declare doesn't even error usefully —
 # bash 3.2 reads `[sonarr]=8989` as an arithmetic subscript and dies with
@@ -79,7 +83,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 ip_for() {
   case "$1" in
     seerr)           echo 192.168.50.33  ;;
-    plex)            echo 192.168.86.236 ;;
+    plex)            echo 192.168.86.253 ;;
     sonarr)          echo 192.168.50.15  ;;
     radarr)          echo 192.168.50.16  ;;
     prowlarr)        echo 192.168.50.20  ;;
