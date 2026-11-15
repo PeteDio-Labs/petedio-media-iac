@@ -1,0 +1,27 @@
+---
+# configure-plex-remote-net.yml — the network on pve03 for plex-remote 244, the
+# Plex that serves remote users only (MED-11). roles/plex-remote-net/defaults has
+# the design.
+#
+# RUN IT BEFORE THE MERGE THAT CREATES 244. A merge to main applies Terraform, and
+# the container's NIC attaches to vmbr244, which only this play creates. A merge
+# does not run Ansible.
+#
+#     cd ansible
+#     ansible-playbook playbooks/configure-plex-remote-net.yml --check --diff
+#     ansible-playbook playbooks/configure-plex-remote-net.yml
+#
+# A check run writes nothing and skips every command task, so it shows the files
+# it would write and nothing about the kernel. The real run ends by asking the
+# kernel how a reply from 244 would leave, and fails unless the answer is wlo1.
+#
+# Safe to re-run. It touches only its own files, its own bridge, its own nftables
+# table and wlo1's root qdisc. It never runs `ifreload -a` and never flushes the
+# nftables ruleset.
+
+- name: Configure the network for plex-remote 244 on pve03
+  hosts: pve03
+  become: true
+  gather_facts: false
+  roles:
+    - plex-remote-net

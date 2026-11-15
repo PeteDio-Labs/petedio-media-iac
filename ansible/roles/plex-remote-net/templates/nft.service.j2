@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# petedio-media-iac roles/plex-remote-net (MED-11). Loads the inet plex_remote
+# table and nothing else. Ordered like Debian's nftables.service, so the filter
+# is in place before any interface comes up.
+[Unit]
+Description=nftables table for plex-remote 244 (MED-11)
+DefaultDependencies=no
+Wants=network-pre.target systemd-modules-load.service local-fs.target
+Before=network-pre.target shutdown.target
+After=local-fs.target systemd-modules-load.service
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ plex_remote_net_nft_file }}
+ExecReload=/usr/sbin/nft -f {{ plex_remote_net_nft_file }}
+ExecStop=/usr/sbin/nft delete table inet plex_remote
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,231 @@
+---
+# ---------------------------------------------------------------- preflight --
+# Read-only. Each one fails the play before it writes anything that depends on it.
+- name: Plex remote net — read the uplink's address
+  ansible.builtin.command: ip -4 -o addr show dev {{ plex_remote_net_wan_if }}
+  register: plex_remote_net_wan_addr
+  changed_when: false
+  check_mode: false
+
+- name: Plex remote net — assert the uplink holds an IPv4 address
+  ansible.builtin.assert:
+    that: "' inet ' in plex_remote_net_wan_addr.stdout"
+    fail_msg: >-
+      {{ plex_remote_net_wan_if }} on {{ inventory_hostname }} has no IPv4 address. The
+      router forwards 32400 to it, so nothing reaches 244 without one.
+
+# A stanza in interfaces.d is dead without the source line. PVE keeps the line
+# when it rewrites the file, but the pve-node template in petedio-iac owns it.
+- name: Plex remote net — read /etc/network/interfaces
+  ansible.builtin.slurp:
+    src: /etc/network/interfaces
+  register: plex_remote_net_interfaces
+  check_mode: false
+
+- name: Plex remote net — assert it sources interfaces.d
+  ansible.builtin.assert:
+    that: >-
+      (plex_remote_net_interfaces.content | b64decode
+       | regex_findall('(?m)^source /etc/network/interfaces\.d/\*$')) | length > 0
+    fail_msg: >-
+      /etc/network/interfaces on {{ inventory_hostname }} does not source
+      /etc/network/interfaces.d/*, so {{ plex_remote_net_interfaces_file }} would never
+      load. petedio-iac roles/pve-node/templates/interfaces.j2 owns that line.
+
+# Forwarding belongs to the node's own config. Assert it rather than own it.
+- name: Plex remote net — read IPv4 forwarding
+  ansible.builtin.command: sysctl -n net.ipv4.ip_forward
+  register: plex_remote_net_forwarding
+  changed_when: false
+  check_mode: false
+
+- name: Plex remote net — assert IPv4 forwarding is on
+  ansible.builtin.assert:
+    that: plex_remote_net_forwarding.stdout | trim == '1'
+    fail_msg: net.ipv4.ip_forward is off on {{ inventory_hostname }}; pve03 cannot route 244.
+
+# ------------------------------------------------- NetworkManager hands off --
+# Before the bridge exists: NetworkManager would otherwise claim it and flush its
+# address the moment ifupdown2 creates it.
+- name: Plex remote net — keep NetworkManager off the bridge
+  ansible.builtin.template:
+    src: nm-unmanaged.conf.j2
+    dest: "{{ plex_remote_net_nm_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload NetworkManager
+
+- name: Plex remote net — apply the NetworkManager change before the bridge
+  ansible.builtin.meta: flush_handlers
+
+# ---------------------------------------------------------------- nftables --
+- name: Plex remote net — create the ruleset directory
+  ansible.builtin.file:
+    path: "{{ plex_remote_net_nft_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plex remote net — write the ruleset
+  ansible.builtin.template:
+    src: nftables.nft.j2
+    dest: "{{ plex_remote_net_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Reload the plex-remote nftables table
+
+- name: Plex remote net — write the unit that loads it
+  ansible.builtin.template:
+    src: nft.service.j2
+    dest: /etc/systemd/system/{{ plex_remote_net_nft_unit }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: plex_remote_net_unit
+
+# A check run never writes the unit, so systemd cannot find it yet.
+- name: Plex remote net — enable and start the table
+  when: not (ansible_check_mode and plex_remote_net_unit is changed)
+  ansible.builtin.systemd_service:
+    name: "{{ plex_remote_net_nft_unit }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ plex_remote_net_unit is changed }}"
+
+# A reload on a changed ruleset waits for the handlers at the end; flush now so
+# the bridge never comes up under a stale filter.
+- name: Plex remote net — apply a changed ruleset now
+  ansible.builtin.meta: flush_handlers
+
+# ------------------------------------------------------------------ bridge --
+- name: Plex remote net — declare the bridge
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: "{{ plex_remote_net_interfaces_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: plex_remote_net_stanza
+
+- name: Plex remote net — read the bridge's state
+  ansible.builtin.command: ip -o link show dev {{ plex_remote_net_bridge }}
+  register: plex_remote_net_link
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# ifup only this bridge. `ifreload -a` would re-apply every interface on the node.
+# Proxmox's ifupdown2 keeps veth ports on a bridge it re-applies, so a running 244
+# stays attached.
+- name: Plex remote net — bring the bridge up
+  when: plex_remote_net_stanza is changed or plex_remote_net_link.rc != 0
+  ansible.builtin.command: ifup {{ plex_remote_net_bridge }}
+  changed_when: true
+
+# ------------------------------------------------------------ return path --
+- name: Plex remote net — write the dispatcher script
+  ansible.builtin.template:
+    src: dispatcher.sh.j2
+    dest: "{{ plex_remote_net_dispatcher }}"
+    owner: root
+    group: root
+    mode: "0755"
+  register: plex_remote_net_script
+
+- name: Plex remote net — read the table
+  ansible.builtin.command: ip -4 route show table {{ plex_remote_net_table }}
+  register: plex_remote_net_routes
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Plex remote net — read the uplink's root qdisc
+  ansible.builtin.command: tc qdisc show dev {{ plex_remote_net_wan_if }} root
+  register: plex_remote_net_qdisc
+  changed_when: false
+  check_mode: false
+
+# NetworkManager runs the script on the next lease. Run it now so the table holds
+# a route without waiting for one.
+- name: Plex remote net — run the dispatcher script once
+  when: >-
+    plex_remote_net_script is changed
+    or 'default via' not in plex_remote_net_routes.stdout
+    or ((plex_remote_net_egress_kbit | int > 0) != ('htb 1:' in plex_remote_net_qdisc.stdout))
+  ansible.builtin.command: "{{ plex_remote_net_dispatcher }} {{ plex_remote_net_wan_if }} up"
+  changed_when: true
+
+# ------------------------------------------------------------------- prove --
+# Read the kernel's answers, not the files. A check run writes nothing, so these
+# would fail on a node that is fine; they run on a real run only.
+- name: Plex remote net — read the policy rules
+  when: not ansible_check_mode
+  ansible.builtin.command: ip rule show
+  register: plex_remote_net_rules
+  changed_when: false
+
+- name: Plex remote net — assert both rules are in place
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - >-
+        (plex_remote_net_rules.stdout | regex_findall('(?m)^' ~ plex_remote_net_rule_priority
+         ~ ':\s+from all iif ' ~ plex_remote_net_bridge ~ ' lookup ' ~ plex_remote_net_table ~ '\b'))
+        | length == 1
+      - >-
+        (plex_remote_net_rules.stdout | regex_findall('(?m)^' ~ (plex_remote_net_rule_priority + 1)
+         ~ ':\s+from all iif ' ~ plex_remote_net_bridge ~ ' unreachable'))
+        | length == 1
+    fail_msg: "{{ plex_remote_net_rules.stdout }}"
+
+# The question the whole role answers: does a reply from the guest leave by wlo1?
+# 9.9.9.9 stands in for any remote client.
+- name: Plex remote net — ask the kernel how a reply from the guest leaves
+  when: not ansible_check_mode
+  ansible.builtin.command: >-
+    ip -4 route get 9.9.9.9 from {{ plex_remote_net_guest_ip }} iif {{ plex_remote_net_bridge }}
+  register: plex_remote_net_route_get
+  changed_when: false
+
+- name: Plex remote net — assert it leaves by the uplink
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: "' dev ' ~ plex_remote_net_wan_if ~ ' ' in plex_remote_net_route_get.stdout ~ ' '"
+    fail_msg: >-
+      A reply from {{ plex_remote_net_guest_ip }} routes as
+      "{{ plex_remote_net_route_get.stdout }}", not out {{ plex_remote_net_wan_if }}.
+      Remote clients would get no answer.
+    success_msg: "{{ plex_remote_net_route_get.stdout }}"
+
+- name: Plex remote net — read the loaded table
+  when: not ansible_check_mode
+  ansible.builtin.command: nft list table inet plex_remote
+  register: plex_remote_net_nft_live
+  changed_when: false
+
+- name: Plex remote net — assert the DNAT is loaded
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: >-
+      ('dnat ip to ' ~ plex_remote_net_guest_ip ~ ':' ~ plex_remote_net_port)
+      in plex_remote_net_nft_live.stdout
+
+- name: Plex remote net — read the backstop class
+  when: not ansible_check_mode and plex_remote_net_egress_kbit | int > 0
+  ansible.builtin.command: tc class show dev {{ plex_remote_net_wan_if }} classid 1:244
+  register: plex_remote_net_class
+  changed_when: false
+
+- name: Plex remote net — assert the backstop holds its rate
+  when: not ansible_check_mode and plex_remote_net_egress_kbit | int > 0
+  ansible.builtin.assert:
+    that: >-
+      ('ceil ' ~ (plex_remote_net_egress_kbit | int // 1000) ~ 'Mbit')
+      in plex_remote_net_class.stdout
+      or ('ceil ' ~ plex_remote_net_egress_kbit ~ 'Kbit') in plex_remote_net_class.stdout
+    fail_msg: "tc reports: {{ plex_remote_net_class.stdout }}"
+    success_msg: "{{ plex_remote_net_class.stdout }}"

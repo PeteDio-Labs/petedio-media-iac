@@ -51,6 +51,11 @@ plex_settings_wan_total_max_kbps: 0
 plex_settings_custom_connections:
   - http://192.168.86.236:32400
 
+# Further keys for one host, merged over the four below. host_vars/plex-remote.yml
+# uses it for the remote-access keys. The same existence check, comparison and
+# read-back cover them.
+plex_settings_extra_prefs: {}
+
 # The keys this role writes, paired with the values above. Add a key here and the
 # existence check, the write, the comparison and the read-back assertion all pick it
 # up.
@@ -58,8 +63,10 @@ plex_settings_custom_connections:
 # The comparison folds a value of exactly true to 1 and false to 0, so a converged
 # bool does not read as drifted. A text value passes through whole. The comparison
 # also lowercases both ends, so write a text value in lowercase.
-plex_settings_prefs:
+plex_settings_prefs_base:
   TreatWanIpAsLocal: "{{ 1 if plex_settings_treat_wan_as_local | bool else 0 }}"
   WanPerStreamMaxUploadRate: "{{ plex_settings_wan_per_stream_max_kbps }}"
   WanTotalMaxUploadRate: "{{ plex_settings_wan_total_max_kbps }}"
   customConnections: "{{ plex_settings_custom_connections | join(',') }}"
+
+plex_settings_prefs: "{{ plex_settings_prefs_base | combine(plex_settings_extra_prefs) }}"

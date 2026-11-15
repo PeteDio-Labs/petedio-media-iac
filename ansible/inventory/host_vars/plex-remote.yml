@@ -1,0 +1,57 @@
+# plex-remote 244/10.244.0.244 on pve03 — the Plex for REMOTE users only (MED-11).
+# plex-gpu 236 stays the home Plex. The library is the same NFS share, bound in
+# read-only by scripts/lxc-oob-244.sh.
+---
+# Lifecycle (stack-up / stack-down / stack-power), as host_vars/plex-gpu.yml.
+media_service_unit: plexmediaserver
+media_health_port: 32400
+media_in_use_probe: plex
+plex_port: 32400
+plex_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# ⚠ renderD129 on pve03. renderD128 is the RTX 3050, on nouveau, which has no
+# usable hardware encode. scripts/lxc-oob-244.sh proves the PCI path before it
+# passes the node in.
+plex_bootstrap_render_node: /dev/dri/renderD129
+
+# --- playback limits (roles/plex-settings) -----------------------------------
+# Every client of this server is remote, by design. Keep it that way: a remote
+# client gets the remote ceilings below.
+plex_settings_treat_wan_as_local: false
+
+# THE UPLOAD CAPS, in kbps. The house upload is about 30-33 Mbps, and the home
+# Plex and the rest of the house share it. The total leaves about a third free.
+# The per-stream cap lets two full-rate streams run together.
+# roles/plex-remote-net polices the wire at plex_remote_net_egress_kbit, a little
+# above the total, as the backstop.
+plex_settings_wan_total_max_kbps: 20000
+plex_settings_wan_per_stream_max_kbps: 10000
+
+# Plex advertises its public address through the manual port mapping below, so no
+# custom URL. A LAN URL here would hand remote clients an address they cannot use.
+plex_settings_custom_connections: []
+
+# Remote access, with the external port the router forwards. Relay off: a relayed
+# stream is capped at 2 Mbps by Plex and hides a broken forward.
+plex_settings_extra_prefs:
+  PublishServerOnPlexOnlineKey: 1
+  ManualPortMappingMode: 1
+  ManualPortMappingPort: 32400
+  RelayEnabled: 0
+
+# --- libraries (roles/plex-libraries) -----------------------------------------
+# The same two libraries as 236, read from 236 on 2026-11-14.
+plex_libraries:
+  - name: Movies
+    type: movie
+    agent: tv.plex.agents.movie
+    scanner: Plex Movie
+    language: en-US
+    location: /mnt/media/movies
+  - name: TV Shows
+    type: show
+    agent: tv.plex.agents.series
+    scanner: Plex TV Series
+    language: en-US
+    location: /mnt/media/tv-shows
