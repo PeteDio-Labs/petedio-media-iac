@@ -36,8 +36,11 @@
 #
 # 236 stays outside the `media` group, so media-base does not converge it. This
 # play names the host instead; folding it into `media` is a separate decision.
+#
+# plex-remote (244) runs the same role (MED-16). Its in-use guard reads that server's own
+# sessions, so an update skips it while a remote user streams, as it skips 236.
 - name: Plex
-  hosts: plex-gpu
+  hosts: plex-gpu,plex-remote
   gather_facts: false
   roles:
     - plex
@@ -69,7 +72,7 @@
 # `hosts: media` alone that limit matched nothing here, and the run ended with no
 # report at all.
 - name: Update report
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   gather_facts: false
   tasks:
     - name: Render the media stack update report
