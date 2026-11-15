@@ -2,6 +2,9 @@
 # Give the Plex identity back to plex-gpu 236 (MED-11), the reverse of
 # migrate-plex-identity.yml. It stops 244 first, so the identity never runs twice.
 #
+# It also moves 244's copy of the identity aside and removes the migration marker
+# with it, so a retried migration runs in full.
+#
 # It works only while 236's data directory is still aside, which is until
 # reset-plex-gpu.yml has started 236 clean. After that, 236 holds a second
 # server's data, and this play refuses rather than mix the two.
@@ -32,6 +35,45 @@
         name: plexmediaserver
         enabled: false
         state: stopped
+
+    # 244's data directory holds 236's identity and the migration marker. Leaving
+    # either in place makes a retried migrate-plex-identity.yml end on the marker
+    # and report success, and lets a start of 244 run the identity a second time.
+    # So the moved copy goes aside under its own name, and 244's fresh install, set
+    # aside by the migration, takes the directory back.
+    - name: Read 244's data directory
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+      register: plex_rollback_dest_dir
+
+    - name: Read 244's aside copy of its fresh install
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dest_aside }}"
+      register: plex_rollback_dest_fresh
+
+    - name: Drop an earlier rolled-back copy of the moved identity
+      ansible.builtin.file:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dest_rolled_back }}"
+        state: absent
+      when: plex_rollback_dest_dir.stat.exists
+
+    - name: Move the moved identity off 244's data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dest_rolled_back }}"
+      changed_when: true
+      when: plex_rollback_dest_dir.stat.exists
+
+    - name: Put 244's fresh install back, so the migration can run again
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dest_aside }}"
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+        creates: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+      when: plex_rollback_dest_fresh.stat.exists
 
 - name: Roll back the Plex identity — start 236 with its own data
   hosts: plex-gpu

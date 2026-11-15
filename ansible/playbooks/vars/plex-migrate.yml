@@ -15,6 +15,10 @@ plex_migrate_src_aside: Plex Media Server.moved-to-plex-remote
 # 244's own fresh install, moved aside to make room for 236's.
 plex_migrate_dest_aside: Plex Media Server.fresh-install
 
+# 244's copy of 236's identity after a rollback. It carries the marker, so it
+# cannot be mistaken for a finished migration. Safe to delete once 236 runs again.
+plex_migrate_dest_rolled_back: Plex Media Server.rolled-back
+
 # Written into 244's data directory once the copy is proven and started.
 plex_migrate_marker: .migrated-from-plex-gpu
 

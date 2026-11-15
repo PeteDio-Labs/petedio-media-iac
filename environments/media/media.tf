@@ -239,11 +239,11 @@ module "plex_gpu" {
 # playbooks/migrate-plex-identity.yml copies 236's whole data directory into it,
 # identity and claim included, so remote users change nothing. 236 then starts
 # again as a new, home-only server. This is the interim answer to the upload
-# problem until MED-8. It answers on 192.168.86.244 and, after the cutover PR, on
-# 236's old address 192.168.86.236, which pve03 takes over on wlo1.
+# problem until MED-8. It answers on pve03's wlo1 address and, after the
+# cutover PR, on 236's old address 192.168.86.236, which pve03 takes over on wlo1.
 #
 # WHY IT SITS ON AN ISOLATED BRIDGE. vmbr244 exists only on pve03, carries no
-# physical port, and routes out pve03's WiFi (wlo1, 192.168.86.244). pve03 owns
+# physical port, and routes out pve03's WiFi (wlo1). pve03 owns
 # the routing: it DNATs wlo1:32400 to this container and masquerades the
 # container's own egress out wlo1. Inbound traffic is NOT source-NATed, so Plex
 # sees each remote client's real address, files it as remote, and applies the
@@ -252,8 +252,8 @@ module "plex_gpu" {
 # playbooks/configure-plex-remote-net.yml. Run that play BEFORE this merges,
 # because the create fails on a bridge that does not exist.
 #
-# VMID 244 matches the address it answers on from outside, 192.168.86.244, under
-# the 2xx convention. The container address inside vmbr244 repeats the number.
+# VMID 244 reuses tailscale-244's number, which died with pve01. The container
+# address inside vmbr244 repeats the number.
 module "plex_remote" {
   source = "../../modules/proxmox-lxc"
 

@@ -18,10 +18,11 @@ ENV_DIR="$HERE/../environments/media"
 OUT="${OUT:-/tmp/media-plan.txt}"
 
 if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  [ -r "$HERE/../environments/media/vault-ca.crt" ] || { echo "missing environments/media/vault-ca.crt" >&2; exit 1; }
   ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" || {
     echo "no Vault root token in the Keychain (vault-root-token / vault-223)" >&2; exit 1; }
   vget() {
-    curl -sk -m 10 -H "X-Vault-Token: $ROOT_TOKEN" \
+    curl -s -m 10 --cacert "$HERE/../environments/media/vault-ca.crt" -H "X-Vault-Token: $ROOT_TOKEN" \
       "https://192.168.50.223:8200/v1/kv/data/iac/$1" \
       | python3 -c "import sys,json;print((json.load(sys.stdin).get('data',{}).get('data') or {}).get('$2',''))"
   }

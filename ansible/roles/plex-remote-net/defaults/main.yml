@@ -6,7 +6,7 @@
 # port. pve03 routes it, and only through wlo1, the WiFi NIC on the .86 network
 # whose router holds the external 32400 forward:
 #
-#     internet -> router :32400 -> 192.168.86.244:32400 (wlo1)
+#     internet -> router :32400 -> 192.168.86.236:32400 (wlo1, after the takeover)
 #              -> DNAT -> 10.244.0.244:32400 (vmbr244) -> Plex
 #
 # The router forwards to pve03's wlo1 address. nftables rewrites the destination to
