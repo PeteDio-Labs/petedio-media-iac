@@ -30,6 +30,7 @@
 # copies nothing.
 #
 # A second run after a full run changes nothing: 244's marker file ends every play.
+# The marker is written last, so a failed run leaves none and a retry runs in full.
 #
 # ROLLBACK, before playbooks/reset-plex-gpu.yml has run:
 #   on 244: systemctl disable --now plexmediaserver
@@ -101,7 +102,7 @@
       ansible.builtin.set_fact:
         plex_migrate_src_id_sha: >-
           {{ (plex_migrate_src_prefs.content | b64decode
-              | regex_search('MachineIdentifier="([^"]+)"', '\1') | first | default(''))
+              | regex_findall('MachineIdentifier="([^"]+)"') | first | default(''))
              | hash('sha256') }}
         plex_migrate_src_claimed: >-
           {{ (plex_migrate_src_prefs.content | b64decode)
@@ -297,17 +298,6 @@
       diff: false
       when: not ansible_check_mode
 
-    - name: Write the migration marker
-      ansible.builtin.copy:
-        dest: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ plex_migrate_marker }}"
-        content: |
-          Migrated from plex-gpu 236 by playbooks/migrate-plex-identity.yml (MED-11).
-          source machine identifier sha256: {{ hostvars['plex-gpu'].plex_migrate_src_id_sha }}
-        owner: plex
-        group: plex
-        mode: "0644"
-      when: not ansible_check_mode
-
     - name: Start Plex with the moved identity
       ansible.builtin.systemd_service:
         name: plexmediaserver
@@ -330,7 +320,7 @@
         that:
           - >-
             (plex_migrate_identity.content
-             | regex_search('machineIdentifier="([^"]+)"', '\1') | first | default(''))
+             | regex_findall('machineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') == hostvars['plex-gpu'].plex_migrate_src_id_sha
           - plex_migrate_identity.content is search('claimed="1"')
         fail_msg: >-
@@ -379,3 +369,29 @@
           - "Rollback copy: {{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
           - "Next: merge the cutover PR, which readdresses 236, then run"
           - "configure-plex-remote-net.yml, so pve03 takes over 192.168.86.236."
+
+# The marker comes last, after 244 proved the identity and 236's copy moved aside. It ends
+# every play above, so a run that fails earlier has no marker and a plain retry runs in
+# full. The copy plays clear a partial copy and stop 244 again.
+- name: Migrate the Plex identity — write the marker
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: plex_migrate_done | bool
+
+    - name: Write the migration marker
+      ansible.builtin.copy:
+        dest: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ plex_migrate_marker }}"
+        content: |
+          Migrated from plex-gpu 236 by playbooks/migrate-plex-identity.yml (MED-11).
+          source machine identifier sha256: {{ hostvars['plex-gpu'].plex_migrate_src_id_sha }}
+        owner: plex
+        group: plex
+        mode: "0644"
+      when: not ansible_check_mode

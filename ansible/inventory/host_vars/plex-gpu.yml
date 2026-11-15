@@ -31,3 +31,22 @@ media_in_use_probe: plex
 plex_port: 32400
 plex_prefs_path: >-
   /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# --- libraries (roles/plex-libraries) -----------------------------------------
+# The same two libraries 236 held before MED-11 moved its identity to plex-remote 244.
+# reset-plex-gpu.yml starts 236 on an empty data directory, so a new server has none.
+# configure-plex-settings.yml creates them once Pedro has claimed the server. Read
+# from 236 on 2026-11-14.
+plex_libraries:
+  - name: Movies
+    type: movie
+    agent: tv.plex.agents.movie
+    scanner: Plex Movie
+    language: en-US
+    location: /mnt/media/movies
+  - name: TV Shows
+    type: show
+    agent: tv.plex.agents.series
+    scanner: Plex TV Series
+    language: en-US
+    location: /mnt/media/tv-shows

@@ -21,9 +21,14 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   [ -r "$HERE/../environments/media/vault-ca.crt" ] || { echo "missing environments/media/vault-ca.crt" >&2; exit 1; }
   ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" || {
     echo "no Vault root token in the Keychain (vault-root-token / vault-223)" >&2; exit 1; }
+  # The token goes to curl on stdin as a config line, never in its argument list, where
+  # `ps` shows it to every user on the machine. printf is a shell builtin, so the token
+  # is not in printf's argv either. -f turns an HTTP error into a failure, and the empty
+  # check below then names the value that did not come back.
   vget() {
-    curl -s -m 10 --cacert "$HERE/../environments/media/vault-ca.crt" -H "X-Vault-Token: $ROOT_TOKEN" \
-      "https://192.168.50.223:8200/v1/kv/data/iac/$1" \
+    printf 'header = "X-Vault-Token: %s"\n' "$ROOT_TOKEN" \
+      | curl -sf -m 10 --cacert "$HERE/../environments/media/vault-ca.crt" -K - \
+          "https://192.168.50.223:8200/v1/kv/data/iac/$1" \
       | python3 -c "import sys,json;print((json.load(sys.stdin).get('data',{}).get('data') or {}).get('$2',''))"
   }
   AWS_ACCESS_KEY_ID="$(vget minio access_key)"
@@ -32,7 +37,8 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   TF_VAR_ssh_public_key="$(vget lxc-ssh public_key)"
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TF_VAR_proxmox_api_token TF_VAR_ssh_public_key
   unset ROOT_TOKEN
-  [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$TF_VAR_proxmox_api_token" ] || {
+  [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] \
+    && [ -n "$TF_VAR_proxmox_api_token" ] && [ -n "$TF_VAR_ssh_public_key" ] || {
     echo "could not read the keys from Vault; run: pet-secrets doctor" >&2; exit 1; }
   echo "credentials resolved from Vault"
 fi
