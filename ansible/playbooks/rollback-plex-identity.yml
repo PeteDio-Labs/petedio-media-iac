@@ -123,8 +123,11 @@
         creates: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
       when: plex_rollback_aside.stat.exists
 
-    - name: Enable and start Plex on 236
+    # The migration masked the unit. Unmask it here, after 244 stopped and 236's own data
+    # is back, and not before.
+    - name: Unmask, enable and start Plex on 236
       ansible.builtin.systemd_service:
         name: plexmediaserver
+        masked: false
         enabled: true
         state: started

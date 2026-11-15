@@ -44,9 +44,10 @@ field() { printf '%s' "$2" | grep -o "$1=\"[^\"]*\"" | cut -d\" -f2 || true; }
 
 # Reads a claim token on stdin, redeems it inside 236, and prints the HTTP code.
 # The token goes in the query string because that is the endpoint's contract;
-# the request never leaves the container.
+# the request never leaves the container. It reaches curl as a config line on stdin, so
+# no process argument list holds it.
 # shellcheck disable=SC2016  # expands inside 236, not here
-REDEEM='read -r t; [ -n "$t" ] || exit 3; curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:32400/myplex/claim?token=$t"'
+REDEEM='read -r t; [ -n "$t" ] || exit 3; printf "url = \"http://127.0.0.1:32400/myplex/claim?token=%s\"\n" "$t" | curl -s -o /dev/null -w "%{http_code}" -X POST -K -'
 
 step "Preflight"
 [ -f "$PVE_SSH_KEY" ] || die "Proxmox SSH key not found: $PVE_SSH_KEY"
@@ -73,7 +74,8 @@ if [ "$MANUAL" -eq 0 ] && [ "$(field claimed "$src")" = "1" ]; then
   MINT='P="/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml"
 T="$(grep -o "PlexOnlineToken=\"[^\"]*\"" "$P" | cut -d\" -f2)"
 [ -n "$T" ] || exit 4
-curl -fsS -H "X-Plex-Token: $T" -H "Accept: application/json" https://plex.tv/api/claim/token.json \
+printf "header = \"X-Plex-Token: %s\"\n" "$T" \
+  | curl -fsS -K - -H "Accept: application/json" https://plex.tv/api/claim/token.json \
   | sed -n "s/.*\"token\":\"\(claim-[^\"]*\)\".*/\1/p"'
   code="$(on_244 sh -c "$(printf '%q' "$MINT")" | on_236 sh -c "$(printf '%q' "$REDEEM")")" || code=""
   [ -n "$code" ] || printf '  %s could not mint a claim token; falling back to the manual path\n' "$SRC_VMID"

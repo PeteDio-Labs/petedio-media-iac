@@ -141,10 +141,16 @@
           Re-run when nobody is streaming.
       when: not ansible_check_mode
 
-    - name: Disable Plex, so a reboot cannot start a second copy of the identity
+    # Masked, not only disabled. The plex role (/update, update-media.yml) and stack-up.yml
+    # enable and start this unit, and a disabled unit lets them. A masked unit refuses
+    # every start, so no path can run 244's identity here a second time. The rollback and
+    # reset-plex-gpu.yml unmask it. A stack-up or update that fails on the mask is the
+    # guard working.
+    - name: Mask Plex, so no start path can run a second copy of the identity
       ansible.builtin.systemd_service:
         name: "{{ media_service_unit }}"
         enabled: false
+        masked: true
         state: stopped
       when: not ansible_check_mode
 

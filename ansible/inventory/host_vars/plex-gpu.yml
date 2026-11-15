@@ -50,3 +50,13 @@ plex_libraries:
     scanner: Plex TV Series
     language: en-US
     location: /mnt/media/tv-shows
+
+# --- scanning prefs ------------------------------------------------------------
+# The reset writes a fresh Preferences.xml, so the scan settings that roles/plex-bootstrap
+# set once through the API are gone, and the library goes stale. inotify cannot see NFS
+# writes, so scheduled scanning is the only thing that notices new media. These match
+# plex-bootstrap's defaults (plex_bootstrap_scan_interval is seconds, hourly).
+plex_settings_extra_prefs:
+  ScheduledLibraryUpdatesEnabled: 1
+  ScheduledLibraryUpdateInterval: 3600
+  FSEventLibraryUpdatesEnabled: 0

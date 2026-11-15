@@ -41,3 +41,28 @@
         that:
           - plex_libraries | map(attribute='name') | sort == ['Movies', 'TV Shows']
           - plex_libraries | map(attribute='location') | sort == ['/mnt/media/movies', '/mnt/media/tv-shows']
+
+    # A disabled unit lets the plex role and stack-up.yml start 236 mid-migration. Only a
+    # mask refuses every start. These read the playbooks as text, so a refactor that drops
+    # the mask or the unmask fails here before it fails on a live server.
+    - name: The migration masks 236's unit, and only the migration
+      ansible.builtin.assert:
+        that:
+          - (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/migrate-plex-identity.yml')
+             | regex_findall('masked:\s+true') | length) == 1
+          - (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/rollback-plex-identity.yml')
+             | regex_findall('masked:\s+true') | length) == 0
+
+    - name: The rollback and the reset both unmask before they start 236
+      ansible.builtin.assert:
+        that:
+          - (lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/' ~ item)
+             | regex_findall('masked:\s+false') | length) == 1
+      loop: [rollback-plex-identity.yml, reset-plex-gpu.yml]
+
+    - name: plex-gpu declares the scan settings the reset would otherwise drop
+      ansible.builtin.assert:
+        that:
+          - plex_settings_extra_prefs.ScheduledLibraryUpdatesEnabled == 1
+          - plex_settings_extra_prefs.ScheduledLibraryUpdateInterval == 3600
+          - plex_settings_extra_prefs.FSEventLibraryUpdatesEnabled == 0

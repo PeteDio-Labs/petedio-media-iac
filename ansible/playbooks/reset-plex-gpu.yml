@@ -128,9 +128,12 @@
           the identity twice.
       when: plex_reset_live_prefs.stat.exists
 
-    - name: Enable and start Plex on a clean data directory
+    # The migration masked the unit. This is the one place it comes back, after every
+    # assertion above proved the live data directory carries no moved identity.
+    - name: Unmask, enable and start Plex on a clean data directory
       ansible.builtin.systemd_service:
         name: plexmediaserver
+        masked: false
         enabled: true
         state: started
 
