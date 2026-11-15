@@ -61,7 +61,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 # host -> ip. Mirrors ansible/inventory/hosts.yml. These legacy IPs are permanent,
 # not interim: the renumber to the 21x block (PET-49) was CANCELED, not deferred.
 #
-# `plex` is 192.168.86.236 (VMID 236, plex-gpu, pve02; .86-only since PET-504) and NOT the .140 this map
+# `plex` is 192.168.86.253 (VMID 236, plex-gpu, pve02; .86-only since PET-504) and NOT the .140 this map
 # carried until PET-354. Plex 103 at .140 died with pve01 on 2026-09-03 and was not
 # rebuilt, so the four plex probes had been reporting a hard NO against an address
 # that answers nothing. The probe technique itself was never wrong: read the token
@@ -79,7 +79,10 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq)" >&2; exit 
 ip_for() {
   case "$1" in
     seerr)           echo 192.168.50.33  ;;
-    plex)            echo 192.168.86.236 ;;
+    plex)            echo 192.168.86.253 ;;
+    # plex-remote 244 sits on pve03's isolated vmbr244 and only pve03 routes it (MED-11).
+    # 192.168.86.236 is pve03's address, NOT a Plex host: ssh to it lands on the node.
+    plex-remote)     echo 10.244.0.244   ;;
     sonarr)          echo 192.168.50.15  ;;
     radarr)          echo 192.168.50.16  ;;
     prowlarr)        echo 192.168.50.20  ;;
@@ -115,7 +118,9 @@ report() {
 # ssh_curl <host> <remote-shell-snippet> — runs on the host, echoes stdout here.
 ssh_curl() {
   local host="$1" snippet="$2"
-  ssh -i "$SSH_KEY" "${SSH_OPTS[@]}" "root@$(ip_for "$host")" "$snippet" 2>/dev/null
+  local hop=()
+  [[ "$host" == plex-remote ]] && hop=(-o "ProxyCommand=ssh -W %h:%p -o BatchMode=yes -i ${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_proxmox_pedro} root@192.168.50.10")
+  ssh -i "$SSH_KEY" "${SSH_OPTS[@]}" "${hop[@]}" "root@$(ip_for "$host")" "$snippet" 2>/dev/null
 }
 
 hr() { printf '\n\033[1m── %s\033[0m (%s)\n' "$1" "$(ip_for "$1" || echo '?')"; }
@@ -228,29 +233,35 @@ report seerr "settings/radarr (service ids)" \
 # -------------------------------------------------------------------- plex --
 # XML, not JSON — ask for JSON explicitly via Accept. Token from Preferences.xml
 # and sent as a header, never in the query string (same as media-lifecycle).
-hr plex
-PLEX_PRE='T=$(sed -n "s/.*PlexOnlineToken=\"\([^\"]*\)\".*/\1/p" \
-  "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml")'
-PLEX_GET='curl -sS --max-time 20 -H "Accept: application/json" -H "X-Plex-Token: $T"'
+probe_plex() {
+  local host="$1"
+  hr "$host"
+  PLEX_PRE='T=$(sed -n "s/.*PlexOnlineToken=\"\([^\"]*\)\".*/\1/p" \
+    "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml")'
+  PLEX_GET='curl -sS --max-time 20 -H "Accept: application/json" -H "X-Plex-Token: $T"'
 
-report plex "identity+capabilities (/)" \
-  "$(ssh_curl plex "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/")" \
-  '.MediaContainer | {version, platform, machineIdentifier, myPlexUsername, transcoderActiveVideoSessions}'
+  report "$host" "identity+capabilities (/)" \
+    "$(ssh_curl "$host" "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/")" \
+    '.MediaContainer | {version, platform, machineIdentifier, myPlexUsername, transcoderActiveVideoSessions}'
 
-report plex "library/sections (scan targets)" \
-  "$(ssh_curl plex "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/library/sections")" \
-  '[.MediaContainer.Directory[]? | {key, type, title, refreshing, scannedAt}]'
+  report "$host" "library/sections (scan targets)" \
+    "$(ssh_curl "$host" "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/library/sections")" \
+    '[.MediaContainer.Directory[]? | {key, type, title, refreshing, scannedAt}]'
 
-report plex "status/sessions (who is watching)" \
-  "$(ssh_curl plex "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/status/sessions")" \
-  '{sessions: (.MediaContainer.size // 0)}'
+  report "$host" "status/sessions (who is watching)" \
+    "$(ssh_curl "$host" "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/status/sessions")" \
+    '{sessions: (.MediaContainer.size // 0)}'
 
-# Does the built-in updater report anything on an apt install? Expected to be
-# empty/unsupported — which is the finding, not a failure. See the doc.
-report plex "updater/status (expect: unsupported)" \
-  "$(ssh_curl plex "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/updater/status")" \
-  '.MediaContainer | {canInstall, downloadURL, version, size}'
-NOTES+=("plex: an empty or error 'updater/status' CONFIRMS the apt path is the only real update route — see docs/DASHBOARD-CAPABILITIES.md § 3.")
+  # Does the built-in updater report anything on an apt install? Expected to be
+  # empty/unsupported — which is the finding, not a failure. See the doc.
+  report "$host" "updater/status (expect: unsupported)" \
+    "$(ssh_curl "$host" "$PLEX_PRE; $PLEX_GET http://127.0.0.1:32400/updater/status")" \
+    '.MediaContainer | {canInstall, downloadURL, version, size}'
+
+  NOTES+=("$host: an empty or error 'updater/status' CONFIRMS the apt path is the only real update route — see docs/DASHBOARD-CAPABILITIES.md § 3.")
+}
+probe_plex plex
+probe_plex plex-remote
 
 # ------------------------------------------------------------- qbittorrent --
 # qBittorrent has NO WebUI password and does not want one — read this before "fixing" it.
