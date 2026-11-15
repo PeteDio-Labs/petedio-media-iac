@@ -102,7 +102,7 @@
       ansible.builtin.set_fact:
         plex_migrate_src_id_sha: >-
           {{ (plex_migrate_src_prefs.content | b64decode
-              | regex_findall('MachineIdentifier="([^"]+)"') | first | default(''))
+              | regex_findall('\sMachineIdentifier="([^"]+)"') | first | default(''))
              | hash('sha256') }}
         plex_migrate_src_claimed: >-
           {{ (plex_migrate_src_prefs.content | b64decode)
@@ -326,7 +326,7 @@
         that:
           - >-
             (plex_migrate_identity.content
-             | regex_findall('machineIdentifier="([^"]+)"') | first | default(''))
+             | regex_findall('\smachineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') == hostvars['plex-gpu'].plex_migrate_src_id_sha
           - plex_migrate_identity.content is search('claimed="1"')
         fail_msg: >-

@@ -98,7 +98,7 @@
         that:
           - >-
             (plex_reset_takeover_identity.content
-             | regex_findall('machineIdentifier="([^"]+)"') | first | default(''))
+             | regex_findall('\smachineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') == plex_reset_moved_sha
         fail_msg: >-
           {{ plex_reset_takeover_ip }} does not answer as the moved server. Run
@@ -121,7 +121,7 @@
         that:
           - >-
             (plex_reset_live_raw.content | b64decode
-             | regex_findall('MachineIdentifier="([^"]+)"') | first | default(''))
+             | regex_findall('\sMachineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') != plex_reset_moved_sha
         fail_msg: >-
           236's live data directory carries the moved identity. Starting it would run
@@ -152,7 +152,7 @@
         that:
           - >-
             (plex_reset_new_identity.content
-             | regex_findall('machineIdentifier="([^"]+)"') | first | default(''))
+             | regex_findall('\smachineIdentifier="([^"]+)"') | first | default(''))
             | hash('sha256') != plex_reset_moved_sha
         fail_msg: 236 answers with the moved identity. Stop it now.
         success_msg: 236 runs a new identity.

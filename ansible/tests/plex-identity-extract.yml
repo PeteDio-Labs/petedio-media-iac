@@ -16,17 +16,19 @@
   vars_files:
     - ../inventory/host_vars/plex-gpu.yml
   vars:
-    prefs: '<Preferences MachineIdentifier="abc123" PlexOnlineToken="x"/>'
-    identity: '<MediaContainer machineIdentifier="abc123" claimed="1"/>'
+    # The decoys come first, as they can in a real Preferences.xml: a pattern that is not
+    # anchored on the preceding space returns the decoy's value.
+    prefs: '<Preferences ProcessedMachineIdentifier="decoy1" AnonymousMachineIdentifier="decoy2" MachineIdentifier="abc123" PlexOnlineToken="x"/>'
+    identity: '<MediaContainer xmachineIdentifier="decoy" machineIdentifier="abc123" claimed="1"/>'
     marker: "Migrated.\nsource machine identifier sha256: {{ 'a' * 64 }}\n"
   tasks:
     - name: Preferences.xml yields its identifier
       ansible.builtin.assert:
-        that: (prefs | regex_findall('MachineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
+        that: (prefs | regex_findall('\\sMachineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
 
     - name: /identity yields its identifier
       ansible.builtin.assert:
-        that: (identity | regex_findall('machineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
+        that: (identity | regex_findall('\\smachineIdentifier="([^"]+)"') | first | default('')) == 'abc123'
 
     - name: The marker yields its hash
       ansible.builtin.assert:
@@ -34,7 +36,7 @@
 
     - name: A document with no identifier yields an empty string, not an error
       ansible.builtin.assert:
-        that: ('<nothing/>' | regex_findall('machineIdentifier="([^"]+)"') | first | default('')) == ''
+        that: ('<nothing/>' | regex_findall('\\smachineIdentifier="([^"]+)"') | first | default('')) == ''
 
     - name: plex-gpu declares the two libraries a reset server needs
       ansible.builtin.assert:
