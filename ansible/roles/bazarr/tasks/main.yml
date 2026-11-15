@@ -135,13 +135,17 @@
 # ----------------------------------------------------------------- discovery --
 # Bazarr generates its API key on first start and writes it to config.yaml. Read it
 # rather than pinning it, so the key never lands in git.
+#
+# These tasks carry `always`, not `bazarr_config`: the version read below needs the key, and
+# media-updates.yml runs with --skip-tags bazarr_config because its Vault role cannot read
+# the OpenSubtitles.com login (PET-855). They read the host and never touch Vault.
 - name: bazarr — wait for the first start to write config.yaml
   ansible.builtin.wait_for:
     path: "{{ bazarr_config_file }}"
     search_regex: 'apikey:'
     timeout: 120
   check_mode: false
-  tags: [bazarr_config, bazarr_assign]
+  tags: [always]
 
 - name: bazarr — wait for the port
   ansible.builtin.wait_for:
@@ -149,7 +153,7 @@
     port: "{{ bazarr_port }}"
     timeout: 180
   check_mode: false
-  tags: [bazarr_config, bazarr_assign]
+  tags: [always]
 
 - name: bazarr — read config.yaml
   ansible.builtin.slurp:
@@ -157,19 +161,19 @@
   register: bazarr_config_raw
   check_mode: false
   no_log: true
-  tags: [bazarr_config, bazarr_assign]
+  tags: [always]
 
 - name: bazarr — extract the API key
   ansible.builtin.set_fact:
     bazarr_api_key: "{{ (bazarr_config_raw.content | b64decode | from_yaml).auth.apikey | default('') }}"
   no_log: true
-  tags: [bazarr_config, bazarr_assign]
+  tags: [always]
 
 - name: bazarr — fail when the API key is empty
   ansible.builtin.assert:
     that: bazarr_api_key | length > 10
     fail_msg: "No usable auth.apikey in {{ bazarr_config_file }} on {{ inventory_hostname }}."
-  tags: [bazarr_config, bazarr_assign]
+  tags: [always]
 
 # ------------------------------------------------------------ version state --
 - name: bazarr — read the running version
