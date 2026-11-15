@@ -261,10 +261,14 @@ apply runner is **self-hosted inside the homelab**:
   mints `media-updates`, which reads only `kv/iac/lxc-ssh`, and runs `check-updates.yml
   --check` or `update-media.yml` with `--skip-tags baseline`. No push or PR can start it.
 
-**PRs do NOT get a `terraform plan` comment.** A real plan needs the LAN backend and
-provider creds that are deliberately withheld from PR runs. The authoritative plan is
-the operator's local one, or the apply-on-merge log — do not describe the PR plan as
-the review surface.
+**A same-repo PR gets a plan comment** from `terraform-plan-pr.yml`: addresses and counts only,
+planned on the homelab runner after two guards (`scripts/tf-plan-guard.py` and
+`scripts/tf-plan-inspect.py`) and a provider mirror built from main's tree. It triggers on
+`workflow_run` after `terraform`, so main's copy of the workflow runs, never the PR's. A PR that
+changes a provider, backend, variable default, module source or file read gets no plan and a
+comment that says to plan locally. The Vault role it mints, `deploy-media-plan`, reads only
+`kv/iac/minio` and `kv/iac/proxmox` (petedio-iac `vault-config`). The authoritative plan is still the
+apply-on-merge log. `scripts/tf-plan-media.sh` stays as the local fallback.
 
 `push` is filtered with `paths-ignore` (docs, scripts, ansible, `**/*.md`) so a
 docs-only merge can't mint credentials on the homelab runner. `pull_request` is
