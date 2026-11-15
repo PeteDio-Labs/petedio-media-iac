@@ -45,7 +45,7 @@ fi
 
 cd "$ENV_DIR"
 echo "branch: $(git rev-parse --abbrev-ref HEAD) at $(git rev-parse --short HEAD)"
-terraform init -input=false -reconfigure -no-color </dev/null >"$OUT.init" 2>&1 || {
+terraform init -input=false -reconfigure -upgrade -no-color </dev/null >"$OUT.init" 2>&1 || {
   tail -15 "$OUT.init"; echo "terraform init failed" >&2; exit 1; }
 rc=0
 terraform plan -input=false -no-color -lock=false -detailed-exitcode </dev/null >"$OUT" 2>&1 || rc=$?

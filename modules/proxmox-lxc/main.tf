@@ -88,6 +88,7 @@ resource "proxmox_virtual_environment_container" "this" {
   disk {
     datastore_id = var.datastore_id
     size         = var.disk_size
+    replicate    = var.disk_replicate
   }
 
   network_interface {

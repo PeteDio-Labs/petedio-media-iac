@@ -275,7 +275,9 @@ module "plex_remote" {
   memory_swap      = 1024
   # 32G, the same as plex-gpu: a fresh server downloads artwork and metadata for
   # the whole library.
+  # The live rootfs carries replicate=1. Unset, the provider plans false and shows drift.
   disk_size        = 32
+  disk_replicate   = true
   datastore_id     = "local" # pve03 has no thin pool; see PET-334
   target_node      = "pve03"
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst" # pve03's only template
