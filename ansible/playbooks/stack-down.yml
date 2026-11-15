@@ -22,8 +22,10 @@
 # only Plex. Retargeted in PET-354 — the old value matched no host, and Ansible
 # skips an unmatched pattern with a warning, so the stack reported a clean
 # shutdown while Plex kept running.
-- name: Media stack down — 1/5 user-facing (plex-gpu, seerr)
-  hosts: plex-gpu,seerr
+# plex-remote (244) joined after MED-11. It carries the remote users' server, so it is
+# stopped with the other user-facing hosts, and the in-use guard refuses while it streams.
+- name: Media stack down — 1/5 user-facing (plex-gpu, plex-remote, seerr)
+  hosts: plex-gpu,plex-remote,seerr
   gather_facts: false
   vars:
     media_lifecycle_state: stopped
@@ -62,12 +64,13 @@
   roles:
     - media-lifecycle
 
-# media:gpu-media, not media: plex-gpu (236) sits in gpu-media, so `hosts: media`
-# alone left the whole Plex tier out of the report — and out of `--limit plex-gpu`
-# entirely, which ended the run with no report at all. playbooks/media-roles.yml
-# already reads both groups for the same reason (PET-447).
+# media:gpu-media:remote-media, not media: plex-gpu (236) sits in gpu-media and
+# plex-remote (244) in remote-media, so `hosts: media` alone left the whole Plex tier out
+# of the report — and out of `--limit plex-gpu` entirely, which ended the run with no
+# report at all. playbooks/media-roles.yml reads the same groups for the same reason
+# (PET-447, MED-16).
 - name: Media stack down — report
-  hosts: media:gpu-media
+  hosts: media:gpu-media:remote-media
   gather_facts: false
   tasks:
     - name: Summarise
