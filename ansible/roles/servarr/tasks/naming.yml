@@ -39,7 +39,7 @@
 
 - name: "{{ servarr_app }} — write the naming config"
   ansible.builtin.uri:
-    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/config/naming"
+    url: "http://{{ servarr_api_host }}:{{ servarr_port }}/api/{{ servarr_api_version }}/config/naming/{{ servarr_naming_put.id }}"
     method: PUT
     headers:
       X-Api-Key: "{{ servarr_api_key }}"
