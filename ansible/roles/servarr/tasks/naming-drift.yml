@@ -1,0 +1,37 @@
+# The drift computation for tasks/naming.yml (PET-600, PET-648), split out so the
+# test suite includes this exact file. It is pure: it reads `servarr_naming`
+# (declared) and `servarr_naming_live` (the JSON object GET /config/naming
+# returns) and sets facts. It touches no host.
+#
+# It sets:
+#   servarr_naming_drift  one `key: live -> declared` line per differing key
+#   servarr_naming_put    the live object with the declared keys applied, or {}
+#                         when nothing differs
+---
+- name: Servarr — fail when a declared naming key is not one the app returns
+  ansible.builtin.fail:
+    msg: >-
+      servarr_naming declares {{ item }}, but GET /config/naming returns no such
+      key. It returns {{ servarr_naming_live.keys() | sort | to_json }}. Fix the
+      spelling or remove the entry.
+  loop: "{{ servarr_naming.keys() | reject('in', servarr_naming_live.keys()) | list }}"
+
+- name: Servarr — work out which declared naming keys differ
+  vars:
+    servarr_naming_keys: >-
+      {{ servarr_naming.keys()
+         | select('in', servarr_naming_live.keys())
+         | reject('equalto', 'id')
+         | list }}
+  ansible.builtin.set_fact:
+    servarr_naming_drift: >-
+      {%- set out = [] -%}
+      {%- for k in servarr_naming_keys -%}
+      {%- if servarr_naming_live[k] != servarr_naming[k] -%}
+      {{- out.append(k ~ ': ' ~ (servarr_naming_live[k] | to_json) ~ ' -> ' ~ (servarr_naming[k] | to_json)) -}}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    servarr_naming_put: >-
+      {%- set out = servarr_naming_live | combine(servarr_naming) -%}
+      {{ out if out != servarr_naming_live else {} }}
