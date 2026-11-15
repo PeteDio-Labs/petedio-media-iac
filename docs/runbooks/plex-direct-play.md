@@ -29,7 +29,8 @@ runbook lifts those ceilings.
 
 Plex sorts each client into LAN or remote by matching its address against the LAN
 Networks list, which defaults to the server's own subnets. plex-gpu (236) holds one
-address, `192.168.86.236`, on the mesh with the TVs. A client that arrives any other
+address, `192.168.86.253`, on the mesh with the TVs. It held `192.168.86.236`
+until MED-11 moved that address to plex-remote 244. A client that arrives any other
 way, such as over the tailnet at `100.97.96.88` or through Plex Relay, sits outside
 that subnet, so **Plex files it as a remote client** and applies the remote
 ceilings to it.
@@ -83,7 +84,7 @@ server accepted the setting; it does not prove any client Direct Plays.
 To check a real stream, start playback on a TV and read the session:
 
 ```bash
-ssh root@192.168.86.236 \
+ssh root@192.168.86.253 \
   'TOK=$(grep -oE "PlexOnlineToken=\"[^\"]*\"" \
      "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml" \
      | sed "s/.*=\"//;s/\"//"); \

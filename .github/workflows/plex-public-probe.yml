@@ -1,0 +1,70 @@
+# Prove from outside the house that the public Plex port reaches the server that
+# carries the moved identity (MED-11). A GitHub-hosted runner sits off the LAN, so
+# it tests the router forward, pve03's takeover of .236 and the DNAT to 244 in one
+# request.
+#
+# The public address lives in the PLEX_PUBLIC_URL secret, such as
+# http://<public address>:32400, and never in this public repo. The log prints only
+# a SHA-256 of the machine identifier, never the identifier or the address.
+name: plex-public-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "SHA-256 of the moved machineIdentifier, or a prefix of 16 or more hex characters"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch /identity and compare the machine id hash
+        env:
+          PLEX_PUBLIC_URL: ${{ secrets.PLEX_PUBLIC_URL }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -eu
+          if [ -z "${PLEX_PUBLIC_URL:-}" ]; then
+            echo "::error::PLEX_PUBLIC_URL is not set. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          case "$EXPECTED_SHA" in
+            *[!0-9a-f]*) echo "::error::expected_sha must be lowercase hex."; exit 1 ;;
+          esac
+          if [ "${#EXPECTED_SHA}" -lt 16 ]; then
+            echo "::error::expected_sha needs 16 or more hex characters."
+            exit 1
+          fi
+
+          body=""
+          for attempt in 1 2 3; do
+            if body=$(curl -fsS --max-time 15 "${PLEX_PUBLIC_URL%/}/identity" 2>/dev/null); then
+              break
+            fi
+            echo "Attempt $attempt got no answer from the public port."
+            body=""
+            sleep 10
+          done
+          if [ -z "$body" ]; then
+            echo "::error::The public port gave no answer in 3 attempts. Check the router forward and the takeover on pve03."
+            exit 1
+          fi
+
+          id=$(printf '%s' "$body" | sed -n 's/.*machineIdentifier="\([^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$id" ]; then
+            echo "::error::The answer held no machineIdentifier, so it did not come from Plex."
+            exit 1
+          fi
+
+          got=$(printf '%s' "$id" | sha256sum | cut -d' ' -f1)
+          echo "machineIdentifier sha256: $got"
+          case "$got" in
+            "$EXPECTED_SHA"*) echo "The public port reaches the moved identity." ;;
+            *) echo "::error::The public port reaches a different Plex server."; exit 1 ;;
+          esac

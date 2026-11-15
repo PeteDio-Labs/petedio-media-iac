@@ -1,0 +1,13 @@
+---
+# pve03 — the node behind plex-remote 244 (MED-11).
+#
+# Take over 192.168.86.236 on wlo1, the address plex.tv advertises for the server
+# identity that moved from plex-gpu 236 to 244. The router's 32400 forward and every
+# client that remembers .236 then reach 244 with no change. Apply this only after
+# 236 left .236 (environments/media/media.tf): the role runs arping -D first and
+# refuses while another host answers for the address.
+#
+# To roll the takeover back, set this to "" and run
+# playbooks/configure-plex-remote-net.yml. The role removes every address in
+# plex_remote_net_takeover_candidates that this var does not name.
+plex_remote_net_takeover_ip: 192.168.86.236/24

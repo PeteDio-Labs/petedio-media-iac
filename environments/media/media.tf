@@ -181,12 +181,15 @@ module "plex_gpu" {
 
   vm_id        = 236
   hostname     = "plex-gpu"
-  ipv4_address = "192.168.86.236/24"
+  ipv4_address = "192.168.86.253/24"
   gateway      = "192.168.86.1"
   bridge       = "vmbr2" # pve02's wired mesh adapter. NOT vmbr1. See above.
-  # 192.168.86.236 IS NOT AN ARBITRARY CHOICE. plex.tv advertises this exact
-  # address for this server, and Plex cannot republish: every publish since
-  # 2026-09-10 returns 403 ("Updating device connections failed").
+  # 236 GAVE UP 192.168.86.236 IN MED-11. plex.tv advertises that exact address
+  # for the server identity 236 used to carry, and that identity cannot
+  # republish: every publish since 2026-09-10 returns 403 ("Updating device
+  # connections failed"). The identity moved to plex-remote 244 on pve03, so
+  # pve03 holds .236 on wlo1 and DNATs it to 244 (roles/plex-remote-net). 236 is
+  # a new home server on .253, which arping -D found free on 2026-11-14.
   mac_address = "BC:24:11:0D:D9:A4"
   # No 236.fw exists, so the firewall filters nothing. It stays off, matching
   # the mesh leg as it ran before this change.
