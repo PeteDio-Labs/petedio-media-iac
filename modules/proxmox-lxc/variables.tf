@@ -55,7 +55,7 @@ variable "disk_size" {
 }
 
 variable "disk_replicate" {
-  description = "Whether Proxmox includes the root disk in storage replication (the rootfs `replicate` flag). The provider plans false when this is unset, so a guest whose live rootfs carries replicate=1 needs true here to plan no change. plex-remote 244 does, because the provider created it that way (MED-11)."
+  description = "Whether Proxmox includes the root disk in storage replication (the rootfs `replicate` flag). The provider plans false when this is unset (observed on plan, not documented), so a guest whose live rootfs carries replicate=1 needs true here to plan no change. plex-remote 244 does, because the provider created it that way (MED-11)."
   type        = bool
   default     = false
 }
