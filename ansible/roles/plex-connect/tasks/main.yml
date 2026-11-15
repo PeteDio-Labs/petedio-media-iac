@@ -26,70 +26,23 @@
     return_content: true
   register: pc_existing
   changed_when: false
+  check_mode: false
   no_log: true
 
-- name: Work out whether ours is already there
-  ansible.builtin.set_fact:
-    pc_current: >-
-      {{ (pc_existing.json | selectattr('implementation','equalto','PlexServer') | list | first) | default({}) }}
-
-# The payload Sonarr and Radarr both accept. `updateLibrary` is the field that
-# does the actual work — without it the connection exists and notifies nothing.
-- name: Build the connection definition
-  ansible.builtin.set_fact:
-    pc_body:
-      name: "{{ plex_connect_name }}"
-      implementation: PlexServer
-      implementationName: Plex Media Server
-      configContract: PlexServerSettings
-      onDownload: "{{ plex_connect_on_download }}"
-      onUpgrade: "{{ plex_connect_on_upgrade }}"
-      onRename: "{{ plex_connect_on_rename }}"
-      onGrab: false
-      onHealthIssue: false
-      supportsOnDownload: true
-      supportsOnUpgrade: true
-      supportsOnRename: true
-      tags: []
-      fields:
-        - { name: host, value: "{{ plex_host_ip }}" }
-        - { name: port, value: "{{ plex_connect_port }}" }
-        - { name: useSsl, value: "{{ plex_connect_use_ssl }}" }
-        - { name: authToken, value: "{{ plex_auth_token }}" }
-        - { name: updateLibrary, value: true }
-        - { name: mapFrom, value: "{{ plex_connect_map_from }}" }
-        - { name: mapTo, value: "{{ plex_connect_map_to }}" }
-
-- name: Create the Plex connection
-  when: pc_current == {}
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
-    method: POST
-    headers: { X-Api-Key: "{{ pc_key }}" }
-    body_format: json
-    body: "{{ pc_body }}"
-    status_code: [200, 201]
-  no_log: true
-  register: pc_created
-
-- name: Update the existing connection so a failover repoints it
-  when: pc_current != {}
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification/{{ pc_current.id }}"
-    method: PUT
-    headers: { X-Api-Key: "{{ pc_key }}" }
-    body_format: json
-    body: "{{ pc_body | combine({'id': pc_current.id}) }}"
-    status_code: [200, 202]
-  no_log: true
-  register: pc_updated
-  changed_when: >-
-    (pc_current.fields | selectattr('name','equalto','host') | map(attribute='value') | first | default('')) != plex_host_ip
-    or not (pc_current.fields | selectattr('name','equalto','updateLibrary') | map(attribute='value') | first | default(false))
+# One connection per Plex server, matched by name. A first run after MED-11 finds
+# the old "Plex — plex-gpu" connection still aimed at .236, repoints it at plex-gpu,
+# and creates "Plex — plex-remote" for the address pve03 answers.
+- name: Converge one connection per Plex server
+  ansible.builtin.include_tasks: connection.yml
+  loop: "{{ plex_connect_targets }}"
+  loop_control:
+    loop_var: pc_target
 
 # A connection that exists but points nowhere useful is the failure mode here, so
-# prove it round-trips rather than trusting the POST returned 201.
-- name: Read it back
+# prove each one round-trips rather than trusting the POST returned 201. A --check
+# run sends no write, so it skips the read-back rather than fail on a fine server.
+- name: Read the connections back
+  when: not ansible_check_mode
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
     headers: { X-Api-Key: "{{ pc_key }}" }
@@ -98,13 +51,36 @@
   changed_when: false
   no_log: true
 
-- name: Assert it is present, pointed at the primary, and set to update the library
+- name: Assert each server has one connection, at its address, set to update the library
+  when: not ansible_check_mode
+  vars:
+    pc_named: >-
+      {{ pc_verify.json | selectattr('implementation', 'equalto', 'PlexServer')
+         | selectattr('name', 'equalto', plex_connect_name_prefix ~ item) | list }}
+    pc_fields: "{{ (pc_named | first | default({})).fields | default([]) }}"
   ansible.builtin.assert:
     that:
-      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | list | length) == 1
-      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | map(attribute='fields') | first
-         | selectattr('name','equalto','host') | map(attribute='value') | first) == plex_host_ip
-      - (pc_verify.json | selectattr('implementation','equalto','PlexServer') | map(attribute='fields') | first
-         | selectattr('name','equalto','updateLibrary') | map(attribute='value') | first) | bool
-    fail_msg: "The Plex connection on {{ inventory_hostname }} is missing, aimed elsewhere, or not set to update the library."
-    success_msg: "{{ inventory_hostname }} notifies {{ plex_primary }} at {{ plex_host_ip }} on import, upgrade and rename."
+      - pc_named | length == 1
+      - (pc_fields | selectattr('name', 'equalto', 'host') | map(attribute='value') | first | default('')) == hostvars[item].plex_host_ip
+      - (pc_fields | selectattr('name', 'equalto', 'updateLibrary') | map(attribute='value') | first | default(false)) | bool
+    fail_msg: >-
+      The connection "{{ plex_connect_name_prefix ~ item }}" on {{ inventory_hostname }}
+      is missing, duplicated, aimed elsewhere, or not set to update the library.
+    success_msg: >-
+      {{ inventory_hostname }} notifies {{ item }} at {{ hostvars[item].plex_host_ip }}
+      on import, upgrade and rename.
+  loop: "{{ plex_connect_targets }}"
+
+# The role leaves a Plex connection it did not create alone. Name it so a stale one
+# reads as a decision to make, not as part of the converged state.
+- name: Report any other Plex connection
+  when:
+    - not ansible_check_mode
+    - pc_other | length > 0
+  vars:
+    pc_ours: "{{ plex_connect_targets | map('regex_replace', '^', plex_connect_name_prefix) | list }}"
+    pc_other: >-
+      {{ pc_verify.json | selectattr('implementation', 'equalto', 'PlexServer')
+         | rejectattr('name', 'in', pc_ours) | map(attribute='name') | list }}
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} also holds Plex connections this role does not manage: {{ pc_other | join(', ') }}"

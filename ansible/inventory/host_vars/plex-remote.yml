@@ -66,3 +66,9 @@ plex_libraries:
     scanner: Plex TV Series
     language: en-US
     location: /mnt/media/tv-shows
+
+# --- import notifications (roles/plex-connect) --------------------------------
+# The address Sonarr and Radarr reach this server at. ansible_host, 10.244.0.244,
+# sits behind pve03 and only pve03 routes it. pve03 forwards 32400 on its wlo1
+# addresses, .236 among them, to 244 (roles/plex-remote-net).
+plex_connect_address: 192.168.86.236

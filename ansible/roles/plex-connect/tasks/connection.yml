@@ -1,0 +1,73 @@
+---
+# One Plex connection, for the server named in pc_target. main.yml loops this
+# over plex_connect_targets.
+- name: Find the connection for {{ pc_target }}
+  ansible.builtin.set_fact:
+    pc_current: >-
+      {{ (pc_existing.json | selectattr('implementation', 'equalto', 'PlexServer')
+          | selectattr('name', 'equalto', plex_connect_name_prefix ~ pc_target)
+          | list | first) | default({}) }}
+  no_log: true
+
+# The payload Sonarr and Radarr both accept. `updateLibrary` is the field that
+# does the actual work — without it the connection exists and notifies nothing.
+- name: Build the connection definition for {{ pc_target }}
+  ansible.builtin.set_fact:
+    pc_body:
+      name: "{{ plex_connect_name_prefix ~ pc_target }}"
+      implementation: PlexServer
+      implementationName: Plex Media Server
+      configContract: PlexServerSettings
+      onDownload: "{{ plex_connect_on_download }}"
+      onUpgrade: "{{ plex_connect_on_upgrade }}"
+      onRename: "{{ plex_connect_on_rename }}"
+      onGrab: false
+      onHealthIssue: false
+      supportsOnDownload: true
+      supportsOnUpgrade: true
+      supportsOnRename: true
+      tags: []
+      fields:
+        - { name: host, value: "{{ hostvars[pc_target].plex_host_ip }}" }
+        - { name: port, value: "{{ plex_connect_port }}" }
+        - { name: useSsl, value: "{{ plex_connect_use_ssl }}" }
+        - { name: authToken, value: "{{ hostvars[pc_target].plex_auth_token }}" }
+        - { name: updateLibrary, value: true }
+        - { name: mapFrom, value: "{{ plex_connect_map_from }}" }
+        - { name: mapTo, value: "{{ plex_connect_map_to }}" }
+  no_log: true
+
+- name: Report what changes for {{ pc_target }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ plex_connect_name_prefix ~ pc_target }}:
+      {{ 'absent, will be created' if pc_current == {} else 'host ' ~
+         (pc_current.fields | selectattr('name', 'equalto', 'host') | map(attribute='value') | first | default('none')) }}
+      -> {{ hostvars[pc_target].plex_host_ip }}
+
+- name: Create the connection for {{ pc_target }}
+  when: pc_current == {}
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification"
+    method: POST
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    body_format: json
+    body: "{{ pc_body }}"
+    status_code: [200, 201]
+  no_log: true
+  register: pc_created
+
+- name: Update the connection for {{ pc_target }}
+  when: pc_current != {}
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pc.port }}/api/v3/notification/{{ pc_current.id }}"
+    method: PUT
+    headers: { X-Api-Key: "{{ pc_key }}" }
+    body_format: json
+    body: "{{ pc_body | combine({'id': pc_current.id}) }}"
+    status_code: [200, 202]
+  no_log: true
+  register: pc_updated
+  changed_when: >-
+    (pc_current.fields | selectattr('name','equalto','host') | map(attribute='value') | first | default('')) != hostvars[pc_target].plex_host_ip
+    or not (pc_current.fields | selectattr('name','equalto','updateLibrary') | map(attribute='value') | first | default(false))
