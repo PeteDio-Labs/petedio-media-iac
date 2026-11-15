@@ -59,6 +59,10 @@
   loop_control:
     label: "{{ item.name }}"
 
+# A server that was claimed or started seconds earlier refuses with 400 and logs
+# "the server is still starting up. Please retry later" (MED-11, 236 after its
+# claim). Retry only that 400: a refused create writes nothing, so a retry cannot
+# add a second library. Any other status fails at once.
 - name: Plex libraries — create the missing ones
   when: item.name not in plex_libraries_have
   ansible.builtin.uri:
@@ -70,8 +74,13 @@
     method: POST
     headers:
       X-Plex-Token: "{{ plex_libraries_token }}"
-    status_code: [200, 201]
+    status_code: [200, 201, 400]
     timeout: 30
+  register: plex_libraries_create
+  until: plex_libraries_create.status != 400
+  retries: 18
+  delay: 10
+  failed_when: plex_libraries_create.status not in [200, 201]
   changed_when: true
   no_log: true
   loop: "{{ plex_libraries }}"
