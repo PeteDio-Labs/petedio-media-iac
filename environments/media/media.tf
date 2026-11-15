@@ -282,7 +282,8 @@ module "plex_remote" {
 
   # NO device_passthrough AND NO mount_points HERE, for the reason plex_gpu gives
   # above: both are root@pam-only, and the provider holds an API token.
-  # scripts/lxc-oob-244.sh sets them with `pct set` on pve03:
+  # petedio-iac's playbooks/configure-lxc-passthrough.yml (MED-14) sets them with `pct set`
+  # on pve03, and configure-lxc-features.yml sets nesting:
   #
   #   mp0:      /mnt/media -> /mnt/media, read-only, shared=1
   #   dev0:     /dev/dri/renderD129, gid=44, mode=0660

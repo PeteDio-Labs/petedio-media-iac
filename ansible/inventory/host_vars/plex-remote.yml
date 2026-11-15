@@ -3,7 +3,7 @@
 # in, so remote users keep the server they already have. pve03 then answers on
 # 192.168.86.236, the address plex.tv advertises, and DNATs it here
 # (plex_remote_net_takeover_ip). 236 starts again clean, as a new home-only server.
-# The library is the same NFS share, bound in read-only by scripts/lxc-oob-244.sh.
+# The library is the same NFS share, bound in read-only by petedio-iac's playbooks/configure-lxc-passthrough.yml (petedio-iac, MED-14).
 ---
 # Lifecycle (stack-up / stack-down / stack-power), as host_vars/plex-gpu.yml.
 media_service_unit: plexmediaserver
@@ -14,7 +14,7 @@ plex_prefs_path: >-
   /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
 
 # ⚠ renderD129 on pve03. renderD128 is the RTX 3050, on nouveau, which has no
-# usable hardware encode. scripts/lxc-oob-244.sh proves the PCI path before it
+# usable hardware encode. the passthrough play in petedio-iac proves the PCI path before it
 # passes the node in.
 plex_bootstrap_render_node: /dev/dri/renderD129
 

@@ -6,7 +6,8 @@
 # ORDER, after the apply-on-merge creates 244. 244 takes 236's identity, so
 # nobody claims it fresh:
 #
-#     scripts/lxc-oob-244.sh                                   # bind, render node
+#     (petedio-iac) ansible/playbooks/configure-lxc-passthrough.yml, configure-lxc-features.yml,
+#     configure-lxc-startup.yml                                # bind, render node, nesting, boot order
 #     ansible-playbook playbooks/bootstrap-plex-remote.yml     # install, kept stopped
 #     ansible-playbook playbooks/configure-plex-remote-net.yml # bridge, NAT, caps
 #     ansible-playbook playbooks/migrate-plex-identity.yml -e plex_migrate_confirm=yes
