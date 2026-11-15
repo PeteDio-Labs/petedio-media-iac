@@ -32,6 +32,12 @@ plex_port: 32400
 plex_prefs_path: >-
   /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
 
+# Playback limits (roles/plex-settings). 236 left .236 in MED-11 and runs as a new
+# server on .253, so it advertises .253. The role default is the old address,
+# which pve03 holds for plex-remote 244.
+plex_settings_custom_connections:
+  - http://192.168.86.253:32400
+
 # --- libraries (roles/plex-libraries) -----------------------------------------
 # The same two libraries 236 held before MED-11 moved its identity to plex-remote 244.
 # reset-plex-gpu.yml starts 236 on an empty data directory, so a new server has none.
