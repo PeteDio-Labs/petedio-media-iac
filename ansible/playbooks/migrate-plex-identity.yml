@@ -35,6 +35,7 @@
 # ROLLBACK, before playbooks/reset-plex-gpu.yml has run:
 #   on 244: systemctl disable --now plexmediaserver
 #   on 236: mv "<base>/Plex Media Server.moved-to-plex-remote" "<base>/Plex Media Server"
+#           systemctl unmask plexmediaserver    # the migration masked it; enable fails on a mask
 #           systemctl enable --now plexmediaserver
 # where <base> is /var/lib/plexmediaserver/Library/Application Support.
 # playbooks/rollback-plex-identity.yml does exactly this.
