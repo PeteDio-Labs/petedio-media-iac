@@ -8,6 +8,12 @@ plex_bootstrap_package: plexmediaserver
 plex_bootstrap_service: plexmediaserver
 plex_bootstrap_port: 32400
 
+# Whether the play leaves Plex running. false installs it, then stops and disables
+# it. plex-remote 244 sets false (MED-11): the Debian package starts a fresh,
+# unclaimed server on install, and 244 must not run until
+# playbooks/migrate-plex-identity.yml has copied 236's data directory in.
+plex_bootstrap_start: true
+
 # THE REPO AND THE KEY MUST MATCH, AND THE OBVIOUS PAIRING IS THE WRONG ONE.
 #
 # repo.plex.tv is the current repository and carries 1.43.3. downloads.plex.tv is

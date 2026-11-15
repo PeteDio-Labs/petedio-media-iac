@@ -1,0 +1,20 @@
+---
+# configure-plex-remote.yml — converge plex-remote 244 once it is claimed (MED-11):
+# its two libraries, its upload caps and its remote access.
+#
+#     cd ansible
+#     ansible-playbook playbooks/configure-plex-remote.yml --check --diff
+#     ansible-playbook playbooks/configure-plex-remote.yml
+#
+# host_vars/plex-remote.yml holds every value. RUN IT BY HAND: a merge runs no
+# Ansible. It names only plex-remote, so it cannot change plex-gpu 236.
+#
+# Writing over /:/prefs applies live and needs no restart.
+
+- name: Converge plex-remote 244
+  hosts: plex-remote
+  become: true
+  gather_facts: false
+  roles:
+    - plex-libraries
+    - plex-settings

@@ -1,0 +1,404 @@
+---
+# Move the home Plex's identity from plex-gpu 236 (pve02) to plex-remote 244
+# (pve03), so remote users keep the server they already have (MED-11).
+#
+# It copies 236's whole data directory, Preferences.xml included. That file holds
+# the server's identity (MachineIdentifier, CertificateUUID) and its plex.tv
+# account (PlexOnlineToken), so after the copy 244 IS the server users know.
+#
+# TWO SERVERS MUST NEVER RUN WITH ONE IDENTITY. So this play:
+#   1. stops 236 through the media-lifecycle guard, which refuses while anyone
+#      is streaming, and disables it so a reboot cannot start it;
+#   2. streams the data directory from 236 to 244 through pve02 and pve03;
+#   3. proves the copy by hash, starts 244, and asserts that 244 answers with
+#      236's machine identifier and reports itself claimed;
+#   4. only then moves 236's data directory aside, as the rollback.
+# 236 stays stopped and disabled. playbooks/reset-plex-gpu.yml starts it again,
+# clean, after pve03 has taken over 192.168.86.236.
+#
+# PlexOnlineToken never prints: every task that reads Preferences.xml is no_log,
+# and the play reports the identity only as a SHA-256 of the machine identifier.
+#
+# Run it from media-iac/ansible after bootstrap-plex-remote.yml:
+#
+#   ansible-playbook -i inventory/hosts.yml playbooks/migrate-plex-identity.yml \
+#     --check --diff </dev/null 2>&1 | cat
+#   ansible-playbook -i inventory/hosts.yml playbooks/migrate-plex-identity.yml \
+#     -e plex_migrate_confirm=yes </dev/null 2>&1 | cat
+#
+# Check mode reads both servers and runs the in-use probe. It stops nothing and
+# copies nothing.
+#
+# A second run after a full run changes nothing: 244's marker file ends every play.
+# The marker is written last, so a failed run leaves none and a retry runs in full.
+#
+# ROLLBACK, before playbooks/reset-plex-gpu.yml has run:
+#   on 244: systemctl disable --now plexmediaserver
+#   on 236: mv "<base>/Plex Media Server.moved-to-plex-remote" "<base>/Plex Media Server"
+#           systemctl unmask plexmediaserver    # the migration masked it; enable fails on a mask
+#           systemctl enable --now plexmediaserver
+# where <base> is /var/lib/plexmediaserver/Library/Application Support.
+# playbooks/rollback-plex-identity.yml does exactly this.
+
+- name: Migrate the Plex identity — read the destination
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: Refuse a real run without the confirmation
+      ansible.builtin.assert:
+        that:
+          - ansible_check_mode or (plex_migrate_confirm | default('')) == 'yes'
+        fail_msg: >-
+          This play stops the home Plex and moves its identity to 244.
+          Re-run with -e plex_migrate_confirm=yes, or add --check to rehearse.
+
+    - name: Read the migration marker
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ plex_migrate_marker }}"
+      register: plex_migrate_marker_stat
+
+    - name: Record whether the migration already ran
+      ansible.builtin.set_fact:
+        plex_migrate_done: "{{ plex_migrate_marker_stat.stat.exists }}"
+
+    - name: Report a migration that already ran
+      ansible.builtin.debug:
+        msg: >-
+          {{ plex_migrate_marker }} exists on {{ inventory_hostname }}. The
+          identity already moved, so every play ends here.
+      when: plex_migrate_done | bool
+
+    - name: Assert Plex is installed on the destination
+      ansible.builtin.stat:
+        path: /usr/lib/plexmediaserver/Plex Media Server
+      register: plex_migrate_binary
+      failed_when: not plex_migrate_binary.stat.exists
+      when: not (plex_migrate_done | bool)
+
+- name: Migrate the Plex identity — stop the home server
+  hosts: plex-gpu
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  vars:
+    media_lifecycle_state: stopped
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: hostvars['plex-remote'].plex_migrate_done | bool
+
+    - name: Read the source Preferences.xml
+      ansible.builtin.slurp:
+        src: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/Preferences.xml"
+      register: plex_migrate_src_prefs
+      no_log: true
+
+    - name: Record the source identity as a hash
+      ansible.builtin.set_fact:
+        plex_migrate_src_id_sha: >-
+          {{ (plex_migrate_src_prefs.content | b64decode
+              | regex_findall('\sMachineIdentifier="([^"]+)"') | first | default(''))
+             | hash('sha256') }}
+        plex_migrate_src_claimed: >-
+          {{ (plex_migrate_src_prefs.content | b64decode)
+             is search('PlexOnlineToken="[^"]+"') }}
+      no_log: true
+
+    - name: Assert the source is a claimed server with an identity
+      ansible.builtin.assert:
+        that:
+          - plex_migrate_src_id_sha != ('' | hash('sha256'))
+          - plex_migrate_src_claimed | bool
+        fail_msg: >-
+          Preferences.xml on {{ inventory_hostname }} has no MachineIdentifier or no
+          PlexOnlineToken, so there is no identity to move.
+        success_msg: "Source identity sha256 {{ plex_migrate_src_id_sha[:16] }}, claimed."
+
+    - name: Stop Plex through the in-use guard
+      ansible.builtin.include_role:
+        name: media-lifecycle
+
+    - name: Read whether Plex stopped
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ media_service_unit }}"]
+      register: plex_migrate_src_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert Plex stopped, so the copy is consistent
+      ansible.builtin.assert:
+        that:
+          - plex_migrate_src_active.stdout | trim != 'active'
+        fail_msg: >-
+          {{ media_service_unit }} is still {{ plex_migrate_src_active.stdout | trim }}
+          on {{ inventory_hostname }}: {{ media_in_use_reason }}. Nothing was copied.
+          Re-run when nobody is streaming.
+      when: not ansible_check_mode
+
+    # Masked, not only disabled. The plex role (/update, update-media.yml) and stack-up.yml
+    # enable and start this unit, and a disabled unit lets them. A masked unit refuses
+    # every start, so no path can run 244's identity here a second time. The rollback and
+    # reset-plex-gpu.yml unmask it. A stack-up or update that fails on the mask is the
+    # guard working.
+    - name: Mask Plex, so no start path can run a second copy of the identity
+      ansible.builtin.systemd_service:
+        name: "{{ media_service_unit }}"
+        enabled: false
+        masked: true
+        state: stopped
+      when: not ansible_check_mode
+
+    - name: Hash the files the copy must carry intact
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ item }}"
+        checksum_algorithm: sha256
+      loop: "{{ plex_migrate_verify_files }}"
+      register: plex_migrate_src_sums
+
+    - name: Assert every file to verify exists on the source
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "{{ item.item }} is missing on {{ inventory_hostname }}."
+        quiet: true
+      loop: "{{ plex_migrate_src_sums.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Record the source hashes
+      ansible.builtin.set_fact:
+        plex_migrate_src_checksums: >-
+          {{ dict(plex_migrate_verify_files
+                  | zip(plex_migrate_src_sums.results | map(attribute='stat.checksum'))) }}
+
+- name: Migrate the Plex identity — clear the destination
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: plex_migrate_done | bool
+
+    - name: Stop and disable the destination's fresh install
+      ansible.builtin.systemd_service:
+        name: plexmediaserver
+        enabled: false
+        state: stopped
+
+    - name: Read the fresh install's data directory
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+      register: plex_migrate_dest_dir
+
+    - name: Read the aside copy of the fresh install
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dest_aside }}"
+      register: plex_migrate_dest_aside_stat
+
+    # No marker and an aside copy already there means an earlier run moved the
+    # fresh install aside and then failed part-way through the copy. What sits
+    # in the data directory is that partial copy, so it goes.
+    - name: Remove a partial copy from an earlier failed run
+      ansible.builtin.file:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+        state: absent
+      when:
+        - plex_migrate_dest_dir.stat.exists
+        - plex_migrate_dest_aside_stat.stat.exists
+
+    - name: Move the fresh install's data directory aside
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dest_aside }}"
+        creates: "{{ plex_migrate_base }}/{{ plex_migrate_dest_aside }}"
+      when: plex_migrate_dest_dir.stat.exists
+
+- name: Migrate the Plex identity — stream the data directory, pve02 to pve03
+  hosts: pve02
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: hostvars['plex-remote'].plex_migrate_done | bool
+
+    # pve02 reaches pve03 by its cluster name. By address it fails host key
+    # verification, because 192.168.50.10 belonged to the first pve01.
+    - name: Stream the data directory from 236 into 244
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: >-
+          set -o pipefail;
+          pct exec {{ plex_migrate_src_vmid }} --
+          tar -C {{ plex_migrate_base | quote }}
+          {% for e in plex_migrate_excludes %}--exclude={{ (plex_migrate_dir ~ '/' ~ e) | quote }} {% endfor %}
+          -cf - {{ plex_migrate_dir | quote }}
+          | ssh -o BatchMode=yes {{ plex_migrate_dest_node_ssh }}
+          {{ ('pct exec ' ~ plex_migrate_dest_vmid ~ ' -- tar -C '
+              ~ (plex_migrate_base | quote) ~ ' -xpf -') | quote }}
+      async: 3600
+      poll: 15
+      changed_when: true
+
+- name: Migrate the Plex identity — verify and start the destination
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: plex_migrate_done | bool
+
+    - name: Give the copy to the plex user
+      ansible.builtin.command:
+        argv: [chown, -R, "plex:plex", "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"]
+      changed_when: true
+
+    - name: Hash the copied files
+      ansible.builtin.stat:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ item }}"
+        checksum_algorithm: sha256
+      loop: "{{ plex_migrate_verify_files }}"
+      register: plex_migrate_dest_sums
+      when: not ansible_check_mode
+
+    - name: Assert each copied file matches its source
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.checksum == hostvars['plex-gpu'].plex_migrate_src_checksums[item.item]
+        fail_msg: "{{ item.item }} on 244 does not match 236. Do not start 244."
+        success_msg: "{{ item.item }} matches: {{ item.stat.checksum[:16] }}"
+      loop: "{{ plex_migrate_dest_sums.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not ansible_check_mode
+
+    # 236's GPU is an HD 530 at a PCI address 244 does not have. Without the key,
+    # Plex picks the render node it finds, which is renderD129, the only one 244
+    # is given. diff is off because a diff would print the whole file.
+    - name: Drop 236's hardware transcoder pin
+      ansible.builtin.replace:
+        path: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/Preferences.xml"
+        regexp: '\sHardwareDevicePath="[^"]*"'
+        replace: ''
+      no_log: true
+      diff: false
+      when: not ansible_check_mode
+
+    - name: Start Plex with the moved identity
+      ansible.builtin.systemd_service:
+        name: plexmediaserver
+        enabled: true
+        state: started
+      when: not ansible_check_mode
+
+    - name: Read the identity Plex answers with
+      ansible.builtin.uri:
+        url: http://127.0.0.1:32400/identity
+        return_content: true
+      register: plex_migrate_identity
+      retries: 36
+      delay: 5
+      until: plex_migrate_identity.status | default(0) == 200
+      when: not ansible_check_mode
+
+    - name: Assert 244 answers as 236's server, claimed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (plex_migrate_identity.content
+             | regex_findall('\smachineIdentifier="([^"]+)"') | first | default(''))
+            | hash('sha256') == hostvars['plex-gpu'].plex_migrate_src_id_sha
+          - plex_migrate_identity.content is search('claimed="1"')
+        fail_msg: >-
+          244 does not answer with 236's identity, or is not claimed. 236 is
+          untouched apart from being stopped: run playbooks/rollback-plex-identity.yml.
+        success_msg: >-
+          244 answers as machine {{ hostvars['plex-gpu'].plex_migrate_src_id_sha[:16] }},
+          claimed.
+      when: not ansible_check_mode
+
+    - name: Record that 244 proved the identity
+      ansible.builtin.set_fact:
+        plex_migrate_verified: true
+      when: not ansible_check_mode
+
+- name: Migrate the Plex identity — keep 236's copy as the rollback
+  hosts: plex-gpu
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: hostvars['plex-remote'].plex_migrate_done | bool
+
+    - name: Refuse to move 236's copy before 244 proved the identity
+      ansible.builtin.assert:
+        that:
+          - ansible_check_mode or (hostvars['plex-remote'].plex_migrate_verified | default(false) | bool)
+        fail_msg: 244 never proved 236's identity, so 236 keeps its data directory.
+
+    - name: Move 236's data directory aside
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ plex_migrate_base }}/{{ plex_migrate_dir }}"
+          - "{{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
+        creates: "{{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
+
+    - name: Report what comes next
+      ansible.builtin.debug:
+        msg:
+          - "The identity runs on plex-remote 244. 236 is stopped and disabled."
+          - "Rollback copy: {{ plex_migrate_base }}/{{ plex_migrate_src_aside }}"
+          - "Next: merge the cutover PR, which readdresses 236, then run"
+          - "configure-plex-remote-net.yml, so pve03 takes over 192.168.86.236."
+
+# The marker comes last, after 244 proved the identity and 236's copy moved aside. It ends
+# every play above, so a run that fails earlier has no marker and a plain retry runs in
+# full. The copy plays clear a partial copy and stop 244 again.
+- name: Migrate the Plex identity — write the marker
+  hosts: plex-remote
+  become: true
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - vars/plex-migrate.yml
+  tasks:
+    - name: End here when the identity already moved
+      ansible.builtin.meta: end_host
+      when: plex_migrate_done | bool
+
+    - name: Write the migration marker
+      ansible.builtin.copy:
+        dest: "{{ plex_migrate_base }}/{{ plex_migrate_dir }}/{{ plex_migrate_marker }}"
+        content: |
+          Migrated from plex-gpu 236 by playbooks/migrate-plex-identity.yml (MED-11).
+          source machine identifier sha256: {{ hostvars['plex-gpu'].plex_migrate_src_id_sha }}
+        owner: plex
+        group: plex
+        mode: "0644"
+      when: not ansible_check_mode

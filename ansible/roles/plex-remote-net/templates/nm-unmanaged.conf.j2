@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# petedio-media-iac roles/plex-remote-net (MED-11). NetworkManager.conf sets
+# [ifupdown] managed=true, so NetworkManager would take any bridge it finds in
+# /etc/network/interfaces*, then flush its address. ifupdown2 owns this bridge.
+[keyfile]
+unmanaged-devices+=interface-name:{{ plex_remote_net_bridge }}

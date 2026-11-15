@@ -31,9 +31,12 @@
 # Writing over /:/prefs applies live. Plex needs no restart, and a stream already
 # running keeps the decision it started with, so this holds no in-use guard.
 
-- name: Converge the Plex playback limits
+- name: Converge the Plex libraries and playback limits
   hosts: plex-gpu
   become: true
   gather_facts: false
   roles:
+    # Libraries first: a server reset by reset-plex-gpu.yml has none, and the role finds
+    # both on a server that already holds them and creates nothing.
+    - plex-libraries
     - plex-settings

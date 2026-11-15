@@ -1,0 +1,166 @@
+---
+# Take over plex-gpu 236's old LAN address on pve03's uplink (MED-11), so the
+# router's 32400 forward and every client that remembers 192.168.86.236 reach 244
+# with no change. The nft DNAT matches on iifname, not on an address, so it covers
+# the extra address as it stands.
+#
+# NetworkManager owns wlo1, so the address goes on its connection profile as a
+# static address beside the DHCP lease. Only named fields are read from the
+# profile, never the whole profile, because it holds the WiFi key.
+
+- name: Plex remote net — install arping for the takeover
+  when: plex_remote_net_takeover_ip | length > 0
+  ansible.builtin.apt:
+    name: iputils-arping
+    state: present
+
+- name: Plex remote net — read the uplink's connection profile
+  ansible.builtin.command:
+    argv: [nmcli, -g, GENERAL.CON-UUID, device, show, "{{ plex_remote_net_wan_if }}"]
+  register: plex_remote_net_con_uuid
+  changed_when: false
+  check_mode: false
+
+- name: Plex remote net — assert the uplink has a profile
+  ansible.builtin.assert:
+    that: plex_remote_net_con_uuid.stdout | trim | length > 0
+    fail_msg: NetworkManager reports no active profile on {{ plex_remote_net_wan_if }}.
+
+- name: Plex remote net — read the profile's static addresses
+  ansible.builtin.command:
+    argv: [nmcli, -g, ipv4.addresses, connection, show, "{{ plex_remote_net_con_uuid.stdout | trim }}"]
+  register: plex_remote_net_con_addrs
+  changed_when: false
+  check_mode: false
+
+- name: Plex remote net — record what to add and what to remove
+  ansible.builtin.set_fact:
+    plex_remote_net_con_have: >-
+      {{ plex_remote_net_con_addrs.stdout | split(',') | map('trim') | select | list }}
+    plex_remote_net_takeover_remove: >-
+      {{ plex_remote_net_takeover_candidates
+         | reject('equalto', plex_remote_net_takeover_ip)
+         | select('in', plex_remote_net_con_addrs.stdout | split(',') | map('trim') | list)
+         | list }}
+
+# Nothing else may answer for the address. Before the cutover PR readdresses 236,
+# 236 still holds it, and this stops the play. arping -D exits 0 when no host
+# answers and 1 when one does; anything else is an error, not an answer.
+- name: Plex remote net — find arping
+  when: plex_remote_net_takeover_ip | length > 0
+  ansible.builtin.command:
+    argv: [sh, -c, command -v arping]
+  register: plex_remote_net_arping
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Plex remote net — check that nothing else holds the address
+  when:
+    - plex_remote_net_takeover_ip | length > 0
+    - plex_remote_net_takeover_ip not in plex_remote_net_con_have
+    - plex_remote_net_arping.rc == 0
+  ansible.builtin.command:
+    argv:
+      - arping
+      - -D
+      - -c
+      - "3"
+      - -w
+      - "4"
+      - -I
+      - "{{ plex_remote_net_wan_if }}"
+      - "{{ plex_remote_net_takeover_ip | split('/') | first }}"
+  register: plex_remote_net_dad
+  changed_when: false
+  failed_when: plex_remote_net_dad.rc not in [0, 1]
+  check_mode: false
+
+- name: Plex remote net — refuse an address another host answers for
+  when: plex_remote_net_dad is not skipped
+  ansible.builtin.assert:
+    that: plex_remote_net_dad.rc == 0
+    fail_msg: >-
+      Another host answers ARP for {{ plex_remote_net_takeover_ip }}, so it still
+      holds the address. Readdress plex-gpu 236 first (the cutover PR).
+    success_msg: No host answers for {{ plex_remote_net_takeover_ip }}.
+
+- name: Plex remote net — refuse to add the address unchecked
+  when:
+    - plex_remote_net_takeover_ip | length > 0
+    - plex_remote_net_takeover_ip not in plex_remote_net_con_have
+    - not ansible_check_mode
+  ansible.builtin.assert:
+    that: plex_remote_net_dad is not skipped
+    fail_msg: arping is missing, so the play cannot prove the address is free.
+
+- name: Plex remote net — add the address to the profile
+  when:
+    - plex_remote_net_takeover_ip | length > 0
+    - plex_remote_net_takeover_ip not in plex_remote_net_con_have
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ plex_remote_net_con_uuid.stdout | trim }}"
+      - +ipv4.addresses
+      - "{{ plex_remote_net_takeover_ip }}"
+  register: plex_remote_net_takeover_added
+  changed_when: true
+
+- name: Plex remote net — remove a takeover address no longer declared
+  loop: "{{ plex_remote_net_takeover_remove }}"
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ plex_remote_net_con_uuid.stdout | trim }}"
+      - -ipv4.addresses
+      - "{{ item }}"
+  register: plex_remote_net_takeover_removed
+  changed_when: true
+
+# reapply changes the running device in place, without a reconnect, and fires the
+# dispatcher with "reapply", which rewrites table 244.
+- name: Plex remote net — apply the profile to the running uplink
+  when: plex_remote_net_takeover_added is changed or plex_remote_net_takeover_removed is changed
+  ansible.builtin.command:
+    argv: [nmcli, device, reapply, "{{ plex_remote_net_wan_if }}"]
+  changed_when: true
+
+- name: Plex remote net — tell the network the address moved
+  when: plex_remote_net_takeover_added is changed
+  ansible.builtin.command:
+    argv:
+      - arping
+      - -U
+      - -c
+      - "3"
+      - -I
+      - "{{ plex_remote_net_wan_if }}"
+      - "{{ plex_remote_net_takeover_ip | split('/') | first }}"
+  changed_when: true
+
+- name: Plex remote net — read the uplink's addresses
+  when: not ansible_check_mode
+  ansible.builtin.command:
+    argv: [ip, -4, -o, addr, show, dev, "{{ plex_remote_net_wan_if }}"]
+  register: plex_remote_net_wan_addrs
+  changed_when: false
+
+- name: Plex remote net — assert the uplink holds exactly the declared takeover
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - >-
+        plex_remote_net_takeover_ip | length == 0
+        or (' inet ' ~ plex_remote_net_takeover_ip ~ ' ') in plex_remote_net_wan_addrs.stdout
+      - >-
+        plex_remote_net_takeover_candidates
+        | reject('equalto', plex_remote_net_takeover_ip)
+        | select('in', plex_remote_net_wan_addrs.stdout)
+        | list | length == 0
+    fail_msg: "{{ plex_remote_net_wan_addrs.stdout }}"
+    success_msg: "{{ plex_remote_net_wan_addrs.stdout }}"

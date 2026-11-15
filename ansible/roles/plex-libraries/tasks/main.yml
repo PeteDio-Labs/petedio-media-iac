@@ -1,0 +1,108 @@
+---
+# The token lives in Preferences.xml on the server, as in roles/plex-settings.
+- name: Plex libraries — read Preferences.xml
+  ansible.builtin.slurp:
+    src: "{{ plex_libraries_prefs_path }}"
+  register: plex_libraries_prefs_raw
+  no_log: true
+  check_mode: false
+
+- name: Plex libraries — extract the token
+  ansible.builtin.set_fact:
+    plex_libraries_token: >-
+      {{ (plex_libraries_prefs_raw.content | b64decode
+          | regex_findall('PlexOnlineToken="([^"]+)"') or ['']) | first }}
+  no_log: true
+
+- name: Plex libraries — fail before writing with no token
+  ansible.builtin.assert:
+    that: plex_libraries_token | length > 10
+    fail_msg: >-
+      No PlexOnlineToken in {{ plex_libraries_prefs_path }} on {{ inventory_hostname }}.
+      Claim the server first: plex-remote takes its claim from
+      playbooks/migrate-plex-identity.yml, and plex-gpu from scripts/plex-claim-236.sh.
+
+- name: Plex libraries — read the libraries the server holds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_libraries_port }}/library/sections"
+    headers:
+      X-Plex-Token: "{{ plex_libraries_token }}"
+      Accept: application/json
+    return_content: true
+    timeout: 15
+  register: plex_libraries_before
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Plex libraries — index them by name
+  ansible.builtin.set_fact:
+    plex_libraries_have: >-
+      {{ dict((plex_libraries_before.json.MediaContainer.Directory | default([]))
+              | map(attribute='title')
+              | zip(plex_libraries_before.json.MediaContainer.Directory | default([]))) }}
+
+- name: Plex libraries — fail on a library that exists in another shape
+  when: item.name in plex_libraries_have
+  ansible.builtin.assert:
+    that:
+      - plex_libraries_have[item.name].type == item.type
+      - item.location in (plex_libraries_have[item.name].Location | map(attribute='path') | list)
+    fail_msg: >-
+      {{ inventory_hostname }} holds a library called {{ item.name }} of type
+      {{ plex_libraries_have[item.name].type }} at
+      {{ plex_libraries_have[item.name].Location | map(attribute='path') | list }}, not
+      {{ item.type }} at {{ item.location }}. Fix it in the web app; this role does not
+      rewrite a library.
+    success_msg: "{{ item.name }} is in place."
+  loop: "{{ plex_libraries }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Plex libraries — create the missing ones
+  when: item.name not in plex_libraries_have
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ plex_libraries_port }}/library/sections?{{ {
+        'name': item.name, 'type': item.type, 'agent': item.agent,
+        'scanner': item.scanner, 'language': item.language,
+        'location': item.location } | urlencode }}
+    method: POST
+    headers:
+      X-Plex-Token: "{{ plex_libraries_token }}"
+    status_code: [200, 201]
+    timeout: 30
+  changed_when: true
+  no_log: true
+  loop: "{{ plex_libraries }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# The read-back. Creating a library over the API answers 200 even when Plex
+# refuses an agent it does not know, so prove it exists.
+- name: Plex libraries — read the libraries back
+  when: not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ plex_libraries_port }}/library/sections"
+    headers:
+      X-Plex-Token: "{{ plex_libraries_token }}"
+      Accept: application/json
+    return_content: true
+    timeout: 15
+  register: plex_libraries_after
+  changed_when: false
+  no_log: true
+
+- name: Plex libraries — assert every library exists where declared
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: >-
+      (plex_libraries_after.json.MediaContainer.Directory | default([])
+       | selectattr('title', 'equalto', item.name)
+       | selectattr('type', 'equalto', item.type)
+       | list | length) == 1
+    fail_msg: "{{ item.name }} ({{ item.type }}) is missing after the create."
+    success_msg: "{{ item.name }} -> {{ item.location }}"
+  loop: "{{ plex_libraries }}"
+  loop_control:
+    label: "{{ item.name }}"

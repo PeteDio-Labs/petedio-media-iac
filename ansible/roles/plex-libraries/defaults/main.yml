@@ -1,0 +1,14 @@
+---
+# plex-libraries — create the libraries a Plex server declares, and prove each one
+# points where it should (MED-11).
+#
+# It CREATES a missing library and changes nothing else. A library with the right
+# name and the wrong type or folder fails the play: rewriting one would re-match
+# every item in it, so that stays a decision for a person.
+#
+# Each entry: name, type (movie | show), agent, scanner, language, location.
+# host_vars/plex-remote.yml holds the list for 244.
+plex_libraries: []
+plex_libraries_port: 32400
+plex_libraries_prefs_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml

@@ -1,0 +1,50 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# petedio-media-iac roles/plex-remote-net (MED-11).
+#
+# Keeps table {{ plex_remote_net_table }} pointed at {{ plex_remote_net_wan_if }}'s gateway, so the replies of plex-remote
+# 244 leave by the router that holds the 32400 forward. NetworkManager runs this
+# on every lease. Ansible runs it once after a change, as `<this> {{ plex_remote_net_wan_if }} up`.
+#
+# Without a gateway it leaves the table empty and exits 0. The unreachable rule
+# then holds the guest dark, which is the safe failure.
+set -eu
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+[ "$IFACE" = "{{ plex_remote_net_wan_if }}" ] || exit 0
+case "$ACTION" in
+  up | dhcp4-change | reapply) ;;
+  *) exit 0 ;;
+esac
+
+GW="${IP4_GATEWAY:-}"
+if [ -z "$GW" ]; then
+  GW="$(ip -4 route show default dev {{ plex_remote_net_wan_if }} table main | awk '{ print $3; exit }')"
+fi
+if [ -z "$GW" ]; then
+  logger -t plex-remote "no IPv4 gateway on {{ plex_remote_net_wan_if }}; table {{ plex_remote_net_table }} left as is"
+  exit 0
+fi
+
+ip route replace {{ plex_remote_net_wan_subnet }} dev {{ plex_remote_net_wan_if }} table {{ plex_remote_net_table }}
+ip route replace default via "$GW" dev {{ plex_remote_net_wan_if }} table {{ plex_remote_net_table }}
+
+{% if plex_remote_net_egress_kbit | int > 0 %}
+# The hard upload backstop. Class 1:10 is pve03's own traffic, unshaped. Class
+# 1:244 is everything nftables marked {{ plex_remote_net_egress_mark }} on its way from the guest.
+tc qdisc replace dev {{ plex_remote_net_wan_if }} root handle 1: htb default 10
+tc class replace dev {{ plex_remote_net_wan_if }} parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit
+tc class replace dev {{ plex_remote_net_wan_if }} parent 1:1 classid 1:10 htb rate 900mbit ceil 1000mbit
+tc class replace dev {{ plex_remote_net_wan_if }} parent 1:1 classid 1:244 htb rate {{ plex_remote_net_egress_kbit }}kbit ceil {{ plex_remote_net_egress_kbit }}kbit
+tc qdisc replace dev {{ plex_remote_net_wan_if }} parent 1:10 handle 10: fq_codel
+tc qdisc replace dev {{ plex_remote_net_wan_if }} parent 1:244 handle 244: fq_codel
+tc filter replace dev {{ plex_remote_net_wan_if }} parent 1: protocol ip prio 1 handle {{ plex_remote_net_egress_mark }} fw classid 1:244
+{% else %}
+# The backstop is off. Remove its root qdisc if a previous run left one.
+if tc qdisc show dev {{ plex_remote_net_wan_if }} root | grep -q '^qdisc htb 1:'; then
+  tc qdisc del dev {{ plex_remote_net_wan_if }} root
+fi
+{% endif %}
+
+logger -t plex-remote "table {{ plex_remote_net_table }} default via $GW dev {{ plex_remote_net_wan_if }} ($ACTION)"

@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# petedio-media-iac roles/plex-remote-net (MED-11). The isolated bridge for
+# plex-remote 244. It has no port: pve03 routes it, out wlo1 only.
+#
+# The policy rules send everything that arrives on this bridge to table
+# {{ plex_remote_net_table }}, whose routes the NetworkManager dispatcher script keeps current.
+# The second rule makes the rest unreachable, so the guest never falls through to
+# the main table's vmbr0 default.
+
+auto {{ plex_remote_net_bridge }}
+iface {{ plex_remote_net_bridge }} inet static
+        address {{ plex_remote_net_bridge_address }}
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
+        post-up ip rule show pref {{ plex_remote_net_rule_priority }} | grep -q . || ip rule add iif {{ plex_remote_net_bridge }} lookup {{ plex_remote_net_table }} pref {{ plex_remote_net_rule_priority }}
+        post-up ip rule show pref {{ plex_remote_net_rule_priority + 1 }} | grep -q . || ip rule add iif {{ plex_remote_net_bridge }} unreachable pref {{ plex_remote_net_rule_priority + 1 }}
