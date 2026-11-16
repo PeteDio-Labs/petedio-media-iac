@@ -69,3 +69,9 @@ plex_settings_extra_prefs:
   ScheduledLibraryUpdatesEnabled: 1
   ScheduledLibraryUpdateInterval: 3600
   FSEventLibraryUpdatesEnabled: 0
+  # Seek-bar preview thumbnails. A new server starts at `never`, so scrubbing shows no
+  # frames. `scheduled` builds them in the nightly maintenance window (ButlerStartHour
+  # to ButlerEndHour), not during playback. One frame per 5 seconds, not the default 2,
+  # keeps the library's thumbnails near 3 GB on 236's 32 GB disk (MED-11).
+  GenerateBIFBehavior: scheduled
+  GenerateBIFFrameInterval: 5
