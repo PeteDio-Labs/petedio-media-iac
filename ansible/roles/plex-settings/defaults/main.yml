@@ -68,5 +68,10 @@ plex_settings_prefs_base:
   WanPerStreamMaxUploadRate: "{{ plex_settings_wan_per_stream_max_kbps }}"
   WanTotalMaxUploadRate: "{{ plex_settings_wan_total_max_kbps }}"
   customConnections: "{{ plex_settings_custom_connections | join(',') }}"
+  # Pick audio and subtitle tracks from the plex.tv account's language settings, so
+  # each user's preference (such as an English dub with subtitles) holds on every
+  # server they use. A new server starts at 0 and uses its own defaults instead. Plex
+  # labels this hidden key "Use language preferences from plex.tv" (MED-11).
+  LanguageInCloud: 1
 
 plex_settings_prefs: "{{ plex_settings_prefs_base | combine(plex_settings_extra_prefs) }}"

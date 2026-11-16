@@ -63,6 +63,9 @@ plex_libraries:
 # writes, so scheduled scanning is the only thing that notices new media. These match
 # plex-bootstrap's defaults (plex_bootstrap_scan_interval is seconds, hourly).
 plex_settings_extra_prefs:
+  # The name Plex apps show for this server. Blank, Plex shows the hostname,
+  # plex-gpu, which says nothing about which of the two servers it is (MED-11).
+  FriendlyName: PeteDio Home
   ScheduledLibraryUpdatesEnabled: 1
   ScheduledLibraryUpdateInterval: 3600
   FSEventLibraryUpdatesEnabled: 0
