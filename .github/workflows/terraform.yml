@@ -11,9 +11,8 @@
 #   * apply     — push to main ONLY (already-merged, trusted code). Self-hosted; the ONLY job that
 #                 mints `media-ci` creds + touches state. Apply itself stays OPT-IN behind
 #                 MEDIA_APPLY_ENABLED for the brownfield capture. PR-controlled code never runs here.
-# Tradeoff: PRs no longer get a `terraform plan` comment (a real plan needs the LAN backend +
-# provider creds we now withhold from PR runs). Authoritative plan is the operator's (local) or the
-# apply-on-merge log. The matching Vault-role change (drop the pull_request sub from the media-ci
+# PRs get a plan comment from terraform-plan-pr.yml, which runs on `workflow_run` so main's copy of
+# it runs, never the PR's. The authoritative plan is still the apply-on-merge log. The matching Vault-role change (drop the pull_request sub from the media-ci
 # role) is in petedio-iac vault-config/auth.tf.
 #
 # PREREQ: the `media-ci` JWT role must exist in Vault (petedio-iac vault-config/auth.tf, applied by
@@ -109,6 +108,13 @@ jobs:
       - name: Format check (whole repo)
         working-directory: .
         run: terraform fmt -check -recursive
+
+      # The plan-on-PR guards decide what a runner with credentials will plan (terraform-plan-pr.yml).
+      - name: Test the plan guards and summary
+        working-directory: .
+        run: |
+          pip install --quiet python-hcl2==8.1.4 lark==1.3.1
+          python3 scripts/test-tf-plan.py
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false

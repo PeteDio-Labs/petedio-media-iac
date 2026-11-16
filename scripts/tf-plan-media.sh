@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tf-plan-media.sh — run a local, read-only `terraform plan` for environments/media.
 #
-# A PR in this repo gets no plan and a merge applies, so the plan from this
-# script is the review surface before a merge. It never applies.
+# A same-repo PR gets a plan comment from terraform-plan-pr.yml. Use this script for a PR that
+# workflow refuses (it says so) and for a plan before you push. It never applies.
 #
 # Credentials resolve the way tf-state-repoint-media.sh resolves them: the Vault
 # root token comes from the Keychain (vault-root-token / vault-223), and the
