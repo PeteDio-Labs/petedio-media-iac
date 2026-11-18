@@ -274,10 +274,10 @@ apply-on-merge log. `scripts/tf-plan-media.sh` stays as the local fallback.
 docs-only merge can't mint credentials on the homelab runner. `pull_request` is
 deliberately **unfiltered** so `validate` always reports.
 
-**Vault seals every night around 02:45** — pve03's vzdump runs `mode: stop` — and the
-pete-pi-1 `vault-unseal.timer` reopens it, with the Mac's launchd agent as fallback
-(PET-373). A sealed Vault fails the apply job at the preflight step with a message
-saying so; CI cannot fix it, but a few minutes usually do.
+**Vault opens itself through AWS KMS** since 2026-11-18 (PET-946), and pve03's nightly
+backup skips 223, so a seal is rare. The two unseal watchers are retired. A sealed Vault
+still fails the apply job at the preflight step with a message saying so; a restart needs
+AWS and the internet, so check both before you retry.
 
 ## Workflow
 

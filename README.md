@@ -223,10 +223,9 @@ came here expecting the PR plan to be the review surface: that changed with PET-
 
 `apply` is live (`MEDIA_APPLY_ENABLED=true`), so **a squash-merge really does apply**.
 Pushes are filtered with `paths-ignore` so a docs-only merge doesn't mint credentials
-on the homelab runner. Vault (`.223`) seals every night around 02:45, when pve03's
-vzdump runs `mode: stop`, and the pete-pi-1 `vault-unseal.timer` reopens it with the
-Mac's launchd agent as fallback (PET-373). The apply job preflights the seal state and
-says so; if it catches the window, wait a few minutes or run `pet-secrets doctor`.
+on the homelab runner. Vault (`.223`) opens itself through AWS KMS since 2026-11-18
+(PET-946), and the nightly backup skips it, so a seal is rare. The apply job preflights the
+seal state and says so; if it finds Vault sealed, run `pet-secrets doctor`.
 
 Branch `pet-<n>-<slug>`, squash-merge, mention `PET-<n>` in the PR. Secrets live in
 **Vault**, never in code. See `docs/GOTCHAS.md` and the petedio-iac repo for the
