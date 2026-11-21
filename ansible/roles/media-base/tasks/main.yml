@@ -58,6 +58,31 @@
   failed_when: false
   when: media_base_masked_units | length > 0
 
+# ── Network stanzas for NICs the container does not have ────────────────────
+# The third corrective task. `ifup` fails for a declared `eth1` the container lacks, so
+# `networking.service` fails on every boot and `ifupdown-wait-online` holds
+# `network-online.target`, and so Docker, for about 5 minutes (qbittorrent-vpn 110,
+# 2026-10-23, 2026-11-12 and 2026-11-21).
+#
+# Fail closed: measure the NIC first, and touch a stanza only when /sys/class/net
+# says the interface is absent. A container that does have the NIC keeps its stanza.
+- name: Read which declared-stale NICs the container has
+  ansible.builtin.stat:
+    path: "/sys/class/net/{{ item }}"
+  loop: "{{ media_base_stale_nics }}"
+  register: media_base_nic_stat
+
+- name: Stanzas for NICs the container lacks are removed from /etc/network/interfaces
+  ansible.builtin.replace:
+    path: /etc/network/interfaces
+    regexp: '^(?:(?:auto|allow-hotplug)[ \t]+{{ item.item }}[ \t]*\n|iface[ \t]+{{ item.item }}\b.*\n(?:[ \t]+\S.*\n)*)'
+    replace: ""
+  loop: "{{ media_base_nic_stat.results }}"
+  loop_control:
+    label: "{{ item.item }} (present: {{ item.stat.exists }})"
+  when: not item.stat.exists
+  register: media_base_nic_removed
+
 # ⚠ CATCH THE NEXT ONE, DO NOT WAIT TO FEEL IT. This cost a day to find, because a
 # dead logind has no symptom of its own — it presents as "everything touching that
 # host is slow", which reads as the app being slow and sends you reading the app's

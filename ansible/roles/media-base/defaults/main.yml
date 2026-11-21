@@ -55,6 +55,11 @@ media_base_stale_apt_sources: []
 # papering over this one.
 media_base_masked_units: []
 
+# NIC names whose stanza in /etc/network/interfaces is removed when the container has no
+# such interface. Set per host in host_vars/. Empty = nothing to clean. A NIC that exists
+# is never touched.
+media_base_stale_nics: []
+
 # Master switch consumed by every media role. `check-updates.yml` leaves it
 # false (report only); `update-media.yml` sets it true.
 media_update_apply: false

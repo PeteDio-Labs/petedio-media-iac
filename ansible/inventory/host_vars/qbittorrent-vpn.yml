@@ -30,3 +30,9 @@ qbit_env_file: /opt/qbittorrent-vpn/.env
 # password to fall back on — see docs/GOTCHAS.md. Do not point this at the LAN IP.
 qbit_api: "http://localhost:8080"
 qbit_container: qbittorrent
+
+# LXC 110 has one NIC (eth0), but its /etc/network/interfaces also declares eth1. That
+# fails networking.service on every boot and holds Docker for about 5 minutes behind
+# network-online.target. media-base removes the stanza while the NIC is absent (PET item
+# from the 2026-11-21 power outage report, gap 5).
+media_base_stale_nics: [eth1]
